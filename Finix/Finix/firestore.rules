@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    // Admin = punya dokumen admins/{uid}. Dokumen itu hanya bisa dibuat lewat Firebase Console.
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Daftar admin: user hanya boleh mengecek apakah dirinya admin; tidak ada yang bisa menulis dari aplikasi.
+    match /admins/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+    }
+
+    // Direktori akun: data non-keuangan (nama, email, kapan daftar, kapan aktif, jumlah catatan).
+    // Pemilik bisa membaca/menulis miliknya; admin hanya bisa membaca.
+    match /directory/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['nama', 'email', 'createdAt', 'lastActive', 'jumlahCatatan']);
+      allow delete: if false;
+    }
+
+    // Profil keuangan: pemilik saja. Admin TIDAK bisa membaca.
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Transaksi: pemilik saja + validasi isi
+    match /users/{uid}/transactions/{txId} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.nominal is int
+        && request.resource.data.nominal > 0
+        && request.resource.data.nominal < 1000000000
+        && request.resource.data.jenis in ['keluar', 'masuk', 'transfer', 'tarik']
+        && (!('catatan' in request.resource.data) || request.resource.data.catatan.size() <= 60);
+    }
+
+    // Koleksi lain milik user: kategori (termasuk anggaran), pos, siklus gaji, tagihan, pocket, tabungan
+    match /users/{uid}/{col}/{docId} {
+      allow read, write: if isOwner(uid) && col in ['categories', 'envelopes', 'cycles', 'bills', 'pockets', 'savings'];
+    }
+
+    // Selain itu: tertutup
+  }
+}
