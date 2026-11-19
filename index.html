@@ -257,6 +257,9 @@ h4{margin:0 0 4px;font-size:16px;font-weight:800}
 .bnom{font-weight:800;text-align:right;font-size:14px}
 .badge{display:inline-block;font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:1px}
 .bg-lunas{background:var(--hijau-bg);color:var(--hijau)}.bg-telat,.bg-hari-ini{background:var(--merah-bg);color:var(--merah)}.bg-segera{background:var(--kuning-bg);color:#9A6A00}.bg-nanti{background:#E8F0FE;color:#3367D6}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.rinc-row{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.rinc-row input{margin:0;min-height:46px;font-size:15px}.rinc-row input[data-k="nama"]{flex:3}.rinc-row input[data-k="nominal"]{flex:2;text-align:right}
 .chips.wrap{flex-wrap:wrap}.chips.wrap .chip{flex:none;padding:0 12px;font-size:13px}
 
 /* Tablet */
@@ -514,6 +517,11 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <button type="button" data-p="now" class="active">Siklus ini</button>
     <button type="button" data-p="prev">Siklus lalu</button>
     <button type="button" data-p="3">3 siklus</button>
+    <button type="button" data-p="custom">📅 Tanggal</button>
+  </div>
+  <div id="dash-custom" hidden style="display:flex;gap:10px;margin-bottom:14px">
+    <label style="flex:1;margin:0">Dari<input id="dash-from" type="date"></label>
+    <label style="flex:1;margin:0">Sampai<input id="dash-to" type="date"></label>
   </div>
   <div id="dash-flow"></div>
   <h3 class="section-title">Analisis pengeluaran</h3>
@@ -861,12 +869,30 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <button class="chip" type="button" data-v="50000">50rb</button>
       <button class="chip" type="button" data-v="100000">100rb</button>
     </div>
+    <div id="x-via" class="seg" hidden>
+      <button type="button" data-v="pocket">💳 Dari pocket</button>
+      <button type="button" data-v="tagihan">🧾 Tagihan / cicilan</button>
+    </div>
     <div id="x-catwrap"><div id="cats" class="cats"></div></div>
-    <label><span id="x-from-lbl">Dibayar dari pocket</span><select id="x-from" class="sel"></select></label>
+    <div id="x-wrap-tagihan" hidden>
+      <div class="muted" style="margin-bottom:10px">Belanja pakai paylater atau cicilan? Isi detailnya, tagihan tiap bulan otomatis masuk Kalender Tagihan. Nominal di atas = harga total (boleh dikosongi).</div>
+      <label>Keterangan tagihan<input id="x-t-nama" type="text" maxlength="40" placeholder="Contoh: Tiktok Paylater" autocomplete="off"></label>
+      <label>Tenor (bulan)<input id="x-t-tenor" type="number" inputmode="numeric" min="1" max="60" placeholder="3"></label>
+      <label>Biaya per bulan (Rp)<input id="x-t-biaya" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
+      <label>Jatuh tempo tiap tanggal<input id="x-t-hari" type="number" inputmode="numeric" min="1" max="31"></label>
+      <label>Cicilan pertama di bulan
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <select id="x-t-bln" class="sel" style="margin-top:0;flex:2"></select>
+          <input id="x-t-thn" type="number" inputmode="numeric" min="2000" max="2100" style="margin-top:0;flex:1">
+        </div>
+      </label>
+      <div id="x-t-info" class="muted" style="margin-bottom:14px;line-height:1.6"></div>
+    </div>
+    <label id="x-wrap-from"><span id="x-from-lbl">Dibayar dari pocket</span><select id="x-from" class="sel"></select></label>
     <label id="x-wrap-to" hidden><span id="x-to-lbl">Ke pocket</span><select id="x-to" class="sel"></select></label>
     <label id="x-wrap-fee" hidden>Biaya admin (opsional, Rp)<input id="x-fee" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
     <label id="x-wrap-alok" class="check" hidden><input id="x-alok" type="checkbox"><span>Tambahkan ke jatah anggaran (dibagi otomatis ke pos). Biarkan mati untuk gaji, karena gaji sudah dibagi otomatis tiap siklus.</span></label>
-    <label>Tanggal<input id="x-date" type="date"></label>
+    <label id="x-wrap-date">Tanggal<input id="x-date" type="date"></label>
     <input id="x-note" type="text" maxlength="60" placeholder="Catatan singkat (boleh dikosongi)" style="margin-bottom:10px">
     <p id="x-error" class="error" role="alert"></p>
     <button id="x-save" class="btn primary" type="button">Catat</button>
@@ -930,7 +956,20 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <div class="sheet-head"><h3 id="cf-title">Ubah kategori</h3><button id="cf-close" class="link" type="button">Tutup</button></div>
     <label>Nama kategori<input id="cf-nama" type="text" maxlength="24" placeholder="Contoh: Kopi, Skincare, Bensin" autocomplete="off"></label>
     <label>Masuk ke pos<select id="cf-pos" class="sel"></select></label>
-    <label>Anggaran siklus ini (Rp)<input id="cf-anggaran" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
+    <div id="cf-mode" class="seg">
+      <button type="button" data-m="bulanan">Bulanan</button>
+      <button type="button" data-m="harian">Harian</button>
+    </div>
+    <label id="cf-wrap-bulanan">Batas uang keluar siklus ini (Rp)<input id="cf-anggaran" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
+    <div id="cf-wrap-harian" hidden>
+      <div class="muted" style="font-weight:600">Hari yang dipakai</div>
+      <div id="cf-hari" class="chips wrap"></div>
+      <div class="muted" style="font-weight:600;margin-bottom:8px">Rincian pengeluaran per hari</div>
+      <div id="cf-rinc"></div>
+      <div id="cf-rinc-preset" class="chips wrap" style="margin-top:4px"></div>
+      <button id="cf-rinc-add" class="mini-btn" type="button">+ Tambah rincian</button>
+      <div id="cf-rinc-sum" class="muted" style="margin:12px 0 14px;line-height:1.6"></div>
+    </div>
     <div class="muted" style="margin-bottom:6px;font-weight:600">Ikon</div>
     <div id="cf-ikon" class="cats"></div>
     <p id="cf-error" class="error" role="alert"></p>

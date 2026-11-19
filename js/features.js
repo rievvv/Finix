@@ -5,7 +5,7 @@ import {
 import {
   fmtRp, parseRp, dateKey, fmtTgl, computeGuard, prevCycle, analyze, compareWithPrevious, cycleTotals,
   avgSpendByCategory, suggestBudgets, planMoney, simulate, paidKey, occurrencesInMonth, occurrencesInRange,
-  billStatus, tenorSchedule, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
+  billStatus, tenorSchedule, catBudget, dailyTotal, countWeekdays, HARI_URUT, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
   cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES, splitSalary, gajiList, salaryDateInCycle,
 } from "./calc.js";
 import { exportExcel, exportPdf, namaBulan } from "./export.js";
@@ -29,11 +29,17 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   /* ================================================================
      DASHBOARD
      ================================================================ */
-  const dash = { period: "now" };
+  const dash = { period: "now", from: "", to: "" };
 
   function dashRange() {
     const tgl = S.profile.tanggalGajian, cur = S.cycle;
     if (dash.period === "prev") { const p = prevCycle(cur, tgl); return { startKey: p.startKey, endKey: p.endKey }; }
+    if (dash.period === "custom") {
+      let a = dash.from || cur.startKey, b = dash.to || dateKey(today0());
+      if (a > b) [a, b] = [b, a];
+      const maks = dateKey(new Date(parseKey(a).getFullYear(), parseKey(a).getMonth(), parseKey(a).getDate() + 365));
+      return { startKey: a, endKey: b > maks ? maks : b };
+    }
     if (dash.period === "3") { const c2 = prevCycle(prevCycle(cur, tgl), tgl); return { startKey: c2.startKey, endKey: cur.endKey }; }
     return { startKey: cur.startKey, endKey: cur.endKey };
   }
@@ -49,18 +55,9 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const unpaid = unpaidInCycle().reduce((a, o) => a + o.nom, 0);
     const f = forecastBalance({ saldo, tx: S.tx, cycle: c, unpaidBills: unpaid });
     const hs = S.hide.saldo, hg = S.hide.gajian;
-    // Gaji yang tanggalnya sudah lewat di siklus ini tapi belum dicatat ke pocket
-    let legacy = S.tx.filter((t) => t.jenis === "masuk" && t.categoryId === "gaji" && !t.gajiId).length;
-    const gajiBelum = gajiList(S.profile).filter((g) => {
-      if (S.tx.some((t) => t.jenis === "masuk" && t.categoryId === "gaji" && t.gajiId === g.id)) return false;
-      if (legacy > 0) { legacy--; return false; } // catatan gaji lama (sebelum ada banyak gaji)
-      const due = salaryDateInCycle(c, g.tanggal);
-      return !!due && due <= today0();
-    });
     const dayTxt = c.dayNumber === 1 ? "Hari gajian 🎉" : `H-${c.daysLeft}`;
     const runway = hs ? "" : f.runway === null ? "Belum ada data pengeluaran untuk prakiraan" : `Cukup ±${f.runway} hari dengan pola belanjamu`;
     const nudges = [];
-    gajiBelum.forEach((g) => nudges.push(`<div class="card nudge"><span>💼 ${esc(g.nama)} (tgl ${g.tanggal}) belum dicatat ke pocket.</span><button class="mini-btn brand" type="button" data-act="gaji" data-gid="${esc(g.id)}">Catat ${esc(fmtRp(g.nominal))}</button></div>`));
     if (S.pockets.length && saldo === 0 && !S.pockets.some((p) => p.saldo)) nudges.push(`<div class="card nudge"><span>👛 Saldo pocket masih Rp 0. Isi saldo awal tiap pocket supaya dashboard akurat.</span><button class="mini-btn" type="button" data-go="pockets">Buka Pocket</button></div>`);
     $("dash-hero").innerHTML = `
       <div class="card hc hc-saldo"><div class="hc-top"><span>💰 Total saldo</span>${S.eyeBtn("saldo")}</div>
@@ -79,12 +76,6 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
         <div class="hc-sub muted">Rata-rata belanja ${fmtRp(f.avg)}/hari${unpaid ? ` + tagihan ${fmtRp(unpaid)}` : ""}</div></div>
       ${nudges.join("")}`;
   }
-  $("dash-hero").addEventListener("click", (e) => {
-    const b = e.target.closest('[data-act="gaji"]'); if (!b) return;
-    const g = gajiList(S.profile).find((x) => x.id === b.dataset.gid);
-    if (g) S.openTx("masuk", { nominal: g.nominal, cat: "gaji", gajiId: g.id, note: g.nama });
-  });
-
   // Arus kas: pemasukan vs pengeluaran, sebaran saldo per pocket, perbandingan antar siklus
   function renderFlow() {
     const { startKey, endKey } = dashRange();
@@ -139,6 +130,8 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     if (!ready()) return;
     document.querySelectorAll("#dash-seg button").forEach((b) => b.classList.toggle("active", b.dataset.p === dash.period));
     const { startKey, endKey } = dashRange();
+    $("dash-custom").hidden = dash.period !== "custom";
+    if (dash.period === "custom") { $("dash-from").value = startKey; $("dash-to").value = endKey; }
     const todayKey = dateKey(today0());
     const a = analyze({ tx: S.txAll, categories: S.categories.concat([CAT_ADMIN]), envelopes: S.envelopes, startKey, endKey });
     $("dash-range").textContent = `${fmtTgl(parseKey(startKey))} – ${fmtTgl(parseKey(endKey))}`;
@@ -215,8 +208,20 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
 
   $("dash-seg").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
-    dash.period = b.dataset.p; renderDashboard();
+    dash.period = b.dataset.p;
+    if (dash.period === "custom" && !dash.from) { dash.from = S.cycle.startKey; dash.to = dateKey(today0()); }
+    renderDashboard();
   });
+  const gantiTanggal = () => {
+    const a = $("dash-from").value, b = $("dash-to").value;
+    if (!a || !b) return;
+    dash.from = a; dash.to = b;
+    if (a > b) toast("Tanggal awal lebih besar dari tanggal akhir, saya tukar otomatis");
+    else if (parseKey(b) - parseKey(a) > 365 * 86400000) toast("Maksimal 1 tahun, dipotong otomatis");
+    renderDashboard();
+  };
+  $("dash-from").addEventListener("change", gantiTanggal);
+  $("dash-to").addEventListener("change", gantiTanggal);
   $("screen-dashboard").addEventListener("click", (e) => {
     const bar = e.target.closest(".vb, .fb"); if (bar) toast(bar.dataset.t);
   });
@@ -253,23 +258,32 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     $("bud-groups").innerHTML = S.envelopes.map((e) => {
       const cats = S.categories.filter((k) => k.envelopeId === e.id);
       const alok = (cd.alokasi || {})[e.id] || 0;
-      const sum = cats.reduce((a, k) => a + (k.anggaran || 0), 0);
+      const sum = cats.reduce((a, k) => a + catBudget(k, c), 0);
       const over = sum > alok;
       return `<div class="card bgroup"><div class="bg-head"><span class="b-name"><b>${esc(e.ikon)} ${esc(e.nama)}</b><button class="edit-btn" type="button" data-epos="${esc(e.id)}" aria-label="Ubah pos ${esc(e.nama)}">✏️</button></span>
         <small class="${over ? "bad-t" : ""}">Anggaran ${fmtRp(sum)} dari ${fmtRp(alok)}${over ? " ⚠️" : ""}</small></div>
         ${cats.map((k) => {
-          const b = k.anggaran || 0, u = spent[k.id] || 0;
+          const harian = k.mode === "harian";
+          const b = catBudget(k, c), u = spent[k.id] || 0;
           const r = b > 0 ? u / b : 0;
           const warna = r > 1 ? "var(--merah)" : r >= 0.8 ? "var(--kuning)" : "var(--hijau)";
           const proy = b > 0 && c.dayNumber >= 3 ? (u / c.dayNumber) * c.totalDays : 0;
           const sub = b <= 0 ? `Terpakai ${fmtRp(u)} · belum diatur`
             : u > b ? `Lebih ${fmtRp(u - b)} dari anggaran`
             : `Terpakai ${fmtRp(u)} · sisa ${fmtRp(b - u)}`;
-          const warn = proy > b * 1.05 && u <= b ? ` · <span class="bad-t">perkiraan lewat ±${fmtRp(proy - b)}</span>` : "";
+          const warn = !harian && proy > b * 1.05 && u <= b ? ` · <span class="bad-t">perkiraan lewat ±${fmtRp(proy - b)}</span>` : "";
+          let info = "";
+          if (harian) {
+            const per = dailyTotal(k), hariTxt = HARI_URUT.filter(([v]) => (k.hariAktif || []).includes(v)).map(([, n]) => n).join(", ");
+            const aktifHariIni = (k.hariAktif || []).includes(today0().getDay());
+            const hariIni = S.tx.filter((x) => x.jenis === "keluar" && x.categoryId === k.id && x.hariKe === dateKey(today0())).reduce((a, x) => a + x.nominal, 0);
+            info = `<div class="muted b-sub">📅 Harian ${fmtRp(per)} · ${esc(hariTxt)} · ${countWeekdays(c.start, c.next, k.hariAktif)} hari di siklus ini${aktifHariIni ? ` · hari ini ${fmtRp(hariIni)} dari ${fmtRp(per)}` : ""}</div>
+              <div class="muted b-sub">${(k.rincian || []).map((r) => `${esc(r.nama)} ${fmtRp(r.nominal)}`).join(" · ")}</div>`;
+          }
           return `<div class="brow"><div class="b-top"><span class="b-name"><span>${esc(k.ikon)} ${esc(k.nama)}</span><button class="edit-btn" type="button" data-ecat="${esc(k.id)}" aria-label="Ubah kategori ${esc(k.nama)}">✏️</button></span>
-            <input class="b-in" data-cat="${esc(k.id)}" data-orig="${b}" inputmode="numeric" autocomplete="off" placeholder="Atur Rp" value="${b ? b.toLocaleString("id-ID") : ""}" aria-label="Anggaran ${esc(k.nama)}"></div>
+            <input class="b-in" data-cat="${esc(k.id)}" data-orig="${b}" inputmode="numeric" autocomplete="off" placeholder="Atur Rp"${harian ? ' readonly data-ro="1"' : ""} value="${b ? b.toLocaleString("id-ID") : ""}" aria-label="Anggaran ${esc(k.nama)}"></div>
             <div class="bar"><i style="width:${Math.min(100, r * 100)}%;background:${warna}"></i></div>
-            <div class="muted b-sub">${sub}${warn}</div></div>`;
+            <div class="muted b-sub">${sub}${warn}</div>${info}</div>`;
         }).join("")}${cats.length ? "" : `<div class="empty" style="padding:8px">Belum ada kategori di pos ini.</div>`}<button class="add-cat" type="button" data-addcat="${esc(e.id)}">+ Tambah kategori di pos ini</button></div>`;
     }).join("");
     renderSim();
@@ -280,8 +294,12 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const el = e.target.closest(".b-in"); if (!el) return;
     const n = parseRp(el.value); el.value = n ? n.toLocaleString("id-ID") : "";
   });
+  $("bud-groups").addEventListener("click", (e) => {
+    const el = e.target.closest(".b-in[data-ro]"); if (!el) return;
+    const cat = S.categories.find((k) => k.id === el.dataset.cat); if (cat) openCatSheet(cat, null);
+  });
   $("bud-groups").addEventListener("focusout", (e) => {
-    const el = e.target.closest(".b-in"); if (!el) return;
+    const el = e.target.closest(".b-in"); if (!el || el.readOnly) return;
     const n = parseRp(el.value);
     if (String(n) === el.dataset.orig) return;
     const next = e.relatedTarget && e.relatedTarget.dataset ? e.relatedTarget.dataset.cat : null;
@@ -300,7 +318,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const saran = suggestBudgets({ categories: S.categories, envelopes: S.envelopes, alokasi: S.cycleDoc.alokasi || {}, history });
     const batch = writeBatch(db);
     S.categories.forEach((k) => {
-      if (saran[k.id] === undefined) return;
+      if (saran[k.id] === undefined || k.mode === "harian") return;
       k.anggaran = saran[k.id];
       batch.set(doc(db, "users", S.user.uid, "categories", k.id), { anggaran: saran[k.id] }, { merge: true });
     });
@@ -312,7 +330,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   /* ---------- Ubah / tambah / hapus kategori dan ubah nama pos ---------- */
   const IKON_KATEGORI = ["🍜", "🛵", "🛒", "📱", "🧋", "🎮", "🧾", "🆘", "☕", "👕", "💊", "🎬", "📚", "🐾", "⛽", "🎁", "💇", "🏋️", "🏠", "💡"];
   const IKON_POS = ["🍚", "🧾", "🛟", "🎈", "💼", "🏠", "🚗", "🎓", "🏥", "✈️", "🎯", "💰"];
-  const cf = { id: null, ikon: "🧋" };
+  const cf = { id: null, ikon: "🧋", mode: "bulanan", hari: [], rinc: [] };
   const ef = { id: null, ikon: "🍚" };
   const renderPick = (box, cur) => $(box).querySelectorAll("button").forEach((b) => b.classList.toggle("sel", b.dataset.i === cur));
   $("cf-ikon").innerHTML = IKON_KATEGORI.map((i) => `<button type="button" class="cat" data-i="${i}" style="min-height:52px"><span style="font-size:22px">${i}</span></button>`).join("");
@@ -321,13 +339,58 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   $("ef-ikon").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { ef.ikon = b.dataset.i; renderPick("ef-ikon", ef.ikon); } });
   $("cf-anggaran").addEventListener("input", () => fmtInput($("cf-anggaran")));
 
+  const PRESET_RINCIAN = ["Parkir", "Ongkos busway", "Ongkos kereta", "Ojek online", "Makan siang"];
+  function renderModeKat() {
+    $("cf-mode").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.m === cf.mode));
+    $("cf-wrap-bulanan").hidden = cf.mode !== "bulanan";
+    $("cf-wrap-harian").hidden = cf.mode !== "harian";
+    if (cf.mode !== "harian") return;
+    $("cf-hari").innerHTML = HARI_URUT.map(([v, n]) => `<button type="button" class="chip${cf.hari.includes(v) ? " on" : ""}" data-v="${v}">${n}</button>`).join("");
+    $("cf-rinc").innerHTML = cf.rinc.map((r, i) => `<div class="rinc-row"><input type="text" data-k="nama" data-i="${i}" maxlength="30" placeholder="Contoh: Parkir" value="${esc(r.nama)}" autocomplete="off"><input type="text" data-k="nominal" data-i="${i}" inputmode="numeric" placeholder="Rp 0" value="${r.nominal ? Number(r.nominal).toLocaleString("id-ID") : ""}" autocomplete="off"><button type="button" class="edit-btn" data-del="${i}" aria-label="Hapus rincian">🗑️</button></div>`).join("");
+    sumKat();
+  }
+  function sumKat() {
+    const per = cf.rinc.reduce((a, r) => a + (Number(r.nominal) || 0), 0);
+    const n = S.cycle ? countWeekdays(S.cycle.start, S.cycle.next, cf.hari) : 0;
+    $("cf-rinc-sum").innerHTML = `Per hari: <b>${fmtRp(per)}</b><br>Siklus ini: ${n} hari × ${fmtRp(per)} = <b>${fmtRp(per * n)}</b>`;
+  }
+  $("cf-mode").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { cf.mode = b.dataset.m; if (cf.mode === "harian" && !cf.rinc.length) cf.rinc = [{ nama: "", nominal: 0 }]; renderModeKat(); } });
+  $("cf-hari").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const v = Number(b.dataset.v);
+    cf.hari = cf.hari.includes(v) ? cf.hari.filter((x) => x !== v) : cf.hari.concat(v);
+    b.classList.toggle("on", cf.hari.includes(v)); sumKat();
+  });
+  $("cf-rinc").addEventListener("input", (e) => {
+    const el = e.target.closest("input[data-i]"); if (!el) return;
+    const r = cf.rinc[Number(el.dataset.i)];
+    if (el.dataset.k === "nominal") r.nominal = fmtInput(el); else r.nama = el.value;
+    sumKat();
+  });
+  $("cf-rinc").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-del]"); if (!b) return;
+    cf.rinc.splice(Number(b.dataset.del), 1); renderModeKat();
+  });
+  $("cf-rinc-add").onclick = () => { if (cf.rinc.length >= 12) { toast("Maksimal 12 rincian"); return; } cf.rinc.push({ nama: "", nominal: 0 }); renderModeKat(); };
+  $("cf-rinc-preset").innerHTML = PRESET_RINCIAN.map((n) => `<button type="button" class="chip" data-n="${esc(n)}">${esc(n)}</button>`).join("");
+  $("cf-rinc-preset").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b || cf.rinc.length >= 12) return;
+    const kosong = cf.rinc.find((r) => !r.nama && !r.nominal);
+    if (kosong) kosong.nama = b.dataset.n; else cf.rinc.push({ nama: b.dataset.n, nominal: 0 });
+    renderModeKat();
+  });
+
   function openCatSheet(cat, envId) {
     cf.id = cat ? cat.id : null; cf.ikon = cat ? cat.ikon || "🧋" : "🧋";
     $("cf-title").textContent = cat ? "Ubah kategori" : "Tambah kategori";
     $("cf-nama").value = cat ? cat.nama : "";
     $("cf-pos").innerHTML = S.envelopes.map((e) => `<option value="${esc(e.id)}">${esc(e.ikon)} ${esc(e.nama)}</option>`).join("");
     $("cf-pos").value = cat ? cat.envelopeId : (envId || (S.envelopes[0] || {}).id);
-    $("cf-anggaran").value = cat && cat.anggaran ? cat.anggaran.toLocaleString("id-ID") : "";
+    cf.mode = cat && cat.mode === "harian" ? "harian" : "bulanan";
+    cf.hari = cat && Array.isArray(cat.hariAktif) ? cat.hariAktif.slice() : [1, 2, 3, 4, 5];
+    cf.rinc = cat && Array.isArray(cat.rincian) ? cat.rincian.map((r) => ({ nama: r.nama, nominal: Number(r.nominal) || 0 })) : [];
+    $("cf-anggaran").value = cat && cat.mode !== "harian" && cat.anggaran ? cat.anggaran.toLocaleString("id-ID") : "";
+    renderModeKat();
     $("cf-delete").hidden = !cat; $("cf-error").textContent = "";
     renderPick("cf-ikon", cf.ikon);
     $("cat-sheet").hidden = false;
@@ -349,7 +412,15 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const old = cf.id ? S.categories.find((k) => k.id === cf.id) : null;
     const id = old ? old.id : doc(collection(db, "users", uid, "categories")).id;
     const urutan = old ? (old.urutan ?? 0) : Math.max(-1, ...S.categories.map((k) => k.urutan ?? 0)) + 1;
-    const data = { ...(old || {}), id, nama, ikon: cf.ikon, envelopeId, anggaran, urutan };
+    const data = { ...(old || {}), id, nama, ikon: cf.ikon, envelopeId, anggaran, urutan, mode: cf.mode };
+    if (cf.mode === "harian") {
+      const rincian = cf.rinc.filter((r) => r.nominal > 0).map((r) => ({ nama: String(r.nama || "").trim().slice(0, 30) || "Pengeluaran", nominal: r.nominal }));
+      if (!cf.hari.length) { err.textContent = "Pilih minimal satu hari."; return; }
+      if (!rincian.length) { err.textContent = "Isi minimal satu rincian pengeluaran harian beserta nominalnya."; return; }
+      if (rincian.some((r) => r.nominal >= 1e9)) { err.textContent = "Nominalnya terlalu besar."; return; }
+      data.hariAktif = cf.hari.slice().sort((a, b) => a - b); data.rincian = rincian;
+      data.anggaran = catBudget(data, S.cycle);
+    }
     if (old) Object.assign(old, data); else S.categories.push(data);
     S.categories.sort((a, b) => (a.urutan ?? 0) - (b.urutan ?? 0));
     setDoc(doc(db, "users", uid, "categories", id), data, { merge: true }).catch((e2) => { console.error(e2); toast("Kategori gagal tersimpan: " + (e2.code || e2.message)); });

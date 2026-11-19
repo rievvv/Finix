@@ -4,7 +4,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   fmtRp, parseRp, dateKey, fmtTgl, parseKey, prevCycle, splitSalary, savedByPocket,
-  POCKET_TYPES, POCKET_PRESETS, DEFAULT_POCKETS, INCOME_CATEGORIES, CAT_ADMIN, HARI_PANJANG,
+  POCKET_TYPES, POCKET_PRESETS, DEFAULT_POCKETS, INCOME_CATEGORIES, CAT_ADMIN, HARI_PANJANG, BULAN_PANJANG,
 } from "./calc.js";
 
 export function createPockets({ db, S, $, esc, toast }) {
@@ -225,7 +225,7 @@ export function createPockets({ db, S, $, esc, toast }) {
   /* ================================================================
      FORM CATAT TRANSAKSI
      ================================================================ */
-  const xs = { jenis: "keluar", cat: null };
+  const xs = { jenis: "keluar", cat: null, via: "pocket", biayaManual: false };
   const fillSelect = (el, list, selected) => {
     el.innerHTML = list.map((p) => `<option value="${esc(p.id)}">${esc(pkIcon(p) + " " + p.nama)} · ${esc(S.mask(fmtRp(p.saldo || 0)))}</option>`).join("");
     if (selected && list.some((p) => p.id === selected)) el.value = selected;
@@ -245,8 +245,27 @@ export function createPockets({ db, S, $, esc, toast }) {
     fillSelect($("x-to"), S.pockets.filter((p) => p.id !== from), $("x-to").value || defaultTo(xs.jenis, from));
     if (!S.pockets.some((p) => p.id !== from)) $("x-to").innerHTML = `<option value="">Tambah pocket lain dulu</option>`;
   }
+  const viaTagihan = () => xs.jenis === "keluar" && xs.via === "tagihan";
+  function infoTagihan() {
+    const n = Number($("x-t-tenor").value), biaya = parseRp($("x-t-biaya").value), y = Number($("x-t-thn").value), m = Number($("x-t-bln").value), h = Number($("x-t-hari").value);
+    if (!n || !biaya || !y) { $("x-t-info").textContent = ""; return; }
+    const akhir = new Date(y, m + n - 1, 1);
+    $("x-t-info").innerHTML = `Tercatat di Kalender Tagihan: <b>${n} × ${fmtRp(biaya)}</b>${h ? `, tiap tanggal ${h}` : ""}<br>${BULAN_PANJANG[m]} ${y} sampai ${BULAN_PANJANG[akhir.getMonth()]} ${akhir.getFullYear()} · total <b>${fmtRp(n * biaya)}</b>`;
+  }
+  function autoBiaya() {
+    const total = parseRp($("x-nominal").value), n = Number($("x-t-tenor").value);
+    if (xs.biayaManual || !total || !n) return;
+    $("x-t-biaya").value = Math.ceil(total / n).toLocaleString("id-ID");
+  }
   function renderTxForm() {
     const j = xs.jenis, io = j === "transfer" || j === "tarik";
+    if (j !== "keluar") xs.via = "pocket";
+    const vt = viaTagihan();
+    $("x-via").hidden = j !== "keluar";
+    document.querySelectorAll("#x-via button").forEach((b) => b.classList.toggle("active", b.dataset.v === xs.via));
+    $("x-wrap-tagihan").hidden = !vt; $("x-wrap-from").hidden = vt; $("x-wrap-date").hidden = vt; $("x-note").hidden = vt;
+    $("x-save").textContent = vt ? "Simpan ke Kalender Tagihan" : "Catat";
+    if (vt) { $("x-catwrap").hidden = true; infoTagihan(); return; }
     document.querySelectorAll("#x-jenis button").forEach((b) => b.classList.toggle("active", b.dataset.j === j));
     $("x-catwrap").hidden = io;
     $("x-wrap-to").hidden = !io; $("x-wrap-fee").hidden = !io; $("x-wrap-alok").hidden = j !== "masuk";
@@ -264,7 +283,11 @@ export function createPockets({ db, S, $, esc, toast }) {
   }
   function openTxSheet(jenis = "keluar", preset = {}) {
     if (!S.pockets.length) { toast("Buat pocket dulu di menu Pocket ya"); return; }
-    xs.jenis = jenis; xs.cat = preset.cat || null; xs.gajiId = preset.gajiId || null;
+    xs.jenis = jenis; xs.cat = preset.cat || null; xs.gajiId = preset.gajiId || null; xs.via = "pocket"; xs.biayaManual = false;
+    const sk = new Date(), nb = new Date(sk.getFullYear(), sk.getMonth() + 1, 1);
+    $("x-t-nama").value = ""; $("x-t-tenor").value = ""; $("x-t-biaya").value = ""; $("x-t-hari").value = sk.getDate();
+    $("x-t-bln").innerHTML = BULAN_PANJANG.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+    $("x-t-bln").value = String(nb.getMonth()); $("x-t-thn").value = nb.getFullYear();
     $("x-nominal").value = preset.nominal ? preset.nominal.toLocaleString("id-ID") : "";
     $("x-note").value = preset.note || ""; $("x-fee").value = ""; $("x-alok").checked = false; $("x-error").textContent = "";
     const t = dateKey(today0());
@@ -277,7 +300,12 @@ export function createPockets({ db, S, $, esc, toast }) {
   $("fab").onclick = () => openTxSheet("keluar");
   $("sheet-close").onclick = closeSheet;
   $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
-  $("x-nominal").addEventListener("input", () => fmtInput($("x-nominal")));
+  $("x-nominal").addEventListener("input", () => { fmtInput($("x-nominal")); autoBiaya(); infoTagihan(); });
+  $("x-via").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; xs.via = b.dataset.v; renderTxForm(); });
+  $("x-t-tenor").addEventListener("input", () => { autoBiaya(); infoTagihan(); });
+  $("x-t-biaya").addEventListener("input", () => { xs.biayaManual = true; fmtInput($("x-t-biaya")); infoTagihan(); });
+  ["x-t-hari", "x-t-thn"].forEach((id) => $(id).addEventListener("input", infoTagihan));
+  $("x-t-bln").addEventListener("change", infoTagihan);
   $("x-fee").addEventListener("input", () => fmtInput($("x-fee")));
   document.querySelectorAll("#sheet .chip").forEach((b) => { b.onclick = () => { $("x-nominal").value = Number(b.dataset.v).toLocaleString("id-ID"); }; });
   $("x-jenis").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; xs.jenis = b.dataset.j; xs.cat = null; renderTxForm(); });
@@ -288,7 +316,28 @@ export function createPockets({ db, S, $, esc, toast }) {
     document.querySelectorAll("#cats .cat").forEach((x) => x.classList.toggle("sel", x === b));
   });
 
+  // Belanja dengan paylater / cicilan: tidak memotong saldo sekarang, hanya membuat tagihan tenor di Kalender Tagihan
+  function simpanTagihan() {
+    const err = $("x-error"); err.textContent = "";
+    const nama = $("x-t-nama").value.trim().slice(0, 40), n = Number($("x-t-tenor").value), biaya = parseRp($("x-t-biaya").value);
+    const h = Number($("x-t-hari").value), y = Number($("x-t-thn").value), m = Number($("x-t-bln").value);
+    if (!nama) { err.textContent = "Isi keterangan tagihannya dulu ya, misalnya Tiktok Paylater."; return; }
+    if (!Number.isInteger(n) || n < 1 || n > 60) { err.textContent = "Tenor antara 1 sampai 60 bulan ya."; return; }
+    if (!biaya || biaya >= 1e9) { err.textContent = "Isi biaya per bulannya dulu ya."; return; }
+    if (!Number.isInteger(h) || h < 1 || h > 31) { err.textContent = "Tanggal jatuh tempo antara 1 sampai 31 ya."; return; }
+    if (!Number.isInteger(y) || y < 2000 || y > 2100) { err.textContent = "Tahun cicilan pertama belum benar."; return; }
+    if (S.bills && S.bills.some((b) => b.nama && b.nama.toLowerCase() === nama.toLowerCase() && b.tipe === "tenor" && !confirm(`Sudah ada tagihan tenor “${b.nama}”. Tetap tambahkan yang baru?`))) return;
+    const total = parseRp($("x-nominal").value);
+    const ref = doc(collection(db, "users", uid(), "bills"));
+    const data = { nama, nominal: biaya, tipe: "tenor", ikon: "💳", aktif: true, hari: h, mulai: `${y}-${String(m + 1).padStart(2, "0")}`, cicilan: Array(n).fill(biaya), paid: {}, createdAt: serverTimestamp() };
+    if (total) data.hargaTotal = total;
+    setDoc(ref, data).catch((e) => { console.error(e); toast("Tagihan gagal tersimpan: " + (e.code || e.message)); });
+    closeSheet();
+    toast(`💳 ${nama}: ${n} × ${fmtRp(biaya)} masuk Kalender Tagihan`);
+  }
+
   $("x-save").onclick = () => {
+    if (viaTagihan()) { simpanTagihan(); return; }
     const err = $("x-error"); err.textContent = "";
     const j = xs.jenis, nominal = parseRp($("x-nominal").value), from = $("x-from").value;
     const io = j === "transfer" || j === "tarik";

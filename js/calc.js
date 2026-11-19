@@ -278,6 +278,27 @@ export function simulate({ aman, daysLeft, belanja = 0, rencana = 0, today = new
   return out;
 }
 
+/* ---------- Anggaran harian per kategori ---------- */
+
+// Urutan hari di tampilan: Senin..Minggu (nilai = Date.getDay())
+export const HARI_URUT = [[1, 'Sen'], [2, 'Sel'], [3, 'Rab'], [4, 'Kam'], [5, 'Jum'], [6, 'Sab'], [0, 'Min']];
+
+export const dailyTotal = (k) => (Array.isArray(k.rincian) ? k.rincian : []).reduce((a, r) => a + (Number(r.nominal) || 0), 0);
+
+// Berapa kali hari-hari terpilih muncul di antara start dan endExclusive
+export function countWeekdays(start, endExclusive, hari) {
+  const set = new Set(hari || []);
+  let n = 0;
+  for (let d = startOfDay(start); d < endExclusive; d = addDays(d, 1)) if (set.has(d.getDay())) n++;
+  return n;
+}
+
+// Anggaran kategori untuk satu siklus: bulanan = nominal tetap; harian = total rincian x jumlah hari terpilih di siklus itu
+export function catBudget(k, cycle) {
+  if (k && k.mode === 'harian') return dailyTotal(k) * countWeekdays(cycle.start, cycle.next, k.hariAktif);
+  return (k && k.anggaran) || 0;
+}
+
 /* ---------- Kalender tagihan ---------- */
 
 // Kunci field di dokumen tagihan, mis. m202611 (aman dipakai sebagai nama field Firestore).
