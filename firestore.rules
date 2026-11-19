@@ -44,9 +44,9 @@ service cloud.firestore {
         && (!('catatan' in request.resource.data) || request.resource.data.catatan.size() <= 60);
     }
 
-    // Koleksi lain milik user: kategori (termasuk anggaran), pos, siklus gaji, tagihan, pocket
+    // Koleksi lain milik user: kategori (termasuk anggaran), pos, siklus gaji, tagihan, pocket, tabungan
     match /users/{uid}/{col}/{docId} {
-      allow read, write: if isOwner(uid) && col in ['categories', 'envelopes', 'cycles', 'bills', 'pockets'];
+      allow read, write: if isOwner(uid) && col in ['categories', 'envelopes', 'cycles', 'bills', 'pockets', 'savings'];
     }
 
     // Selain itu: tertutup

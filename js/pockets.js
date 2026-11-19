@@ -3,7 +3,7 @@ import {
   doc, collection, writeBatch, setDoc, deleteDoc, onSnapshot, increment, serverTimestamp, Timestamp, deleteField,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
-  fmtRp, parseRp, dateKey, fmtTgl, parseKey, prevCycle, splitSalary,
+  fmtRp, parseRp, dateKey, fmtTgl, parseKey, prevCycle, splitSalary, savedByPocket,
   POCKET_TYPES, POCKET_PRESETS, DEFAULT_POCKETS, INCOME_CATEGORIES, CAT_ADMIN, HARI_PANJANG,
 } from "./calc.js";
 
@@ -83,10 +83,12 @@ export function createPockets({ db, S, $, esc, toast }) {
       const list = S.pockets.filter((p) => (POCKET_TYPES[p.tipe] ? p.tipe : "lain") === k);
       if (!list.length) return "";
       return `<h3 class="section-title">${POCKET_TYPES[k].ikon} ${POCKET_TYPES[k].label}</h3><div class="grid2">${list.map((p) => {
-        const f = pocketFlow(p.id);
+        const f = pocketFlow(p.id), sd = savedByPocket(S.savings)[p.id] || 0;
         return `<button class="card pcard" type="button" data-pk="${esc(p.id)}" style="--pc:${esc(tp(p).warna)}">
           <div class="pc-top"><span class="pc-ic">${esc(pkIcon(p))}</span><span class="pc-name">${esc(p.nama)}</span></div>
           <div class="pc-bal">${esc(S.mask(fmtRp(p.saldo || 0)))}</div>
+          ${p.keterangan ? `<div class="pc-note">${esc(p.keterangan)}</div>` : ""}
+          ${sd ? `<div class="pc-save">🐷 ${esc(S.mask(fmtRp(sd)))} ditandai untuk tabungan</div>` : ""}
           <div class="pc-flow"><span class="n-in">+${esc(fmtRp(f.masuk))}</span><span class="n-out">−${esc(fmtRp(f.keluar))}</span><small>siklus ini</small></div></button>`;
       }).join("")}</div>`;
     }).join("");
@@ -104,6 +106,7 @@ export function createPockets({ db, S, $, esc, toast }) {
     $("pp-title").textContent = p ? "Ubah pocket" : "Tambah pocket";
     $("pp-nama").value = p ? p.nama : "";
     $("pp-tipe").value = p && POCKET_TYPES[p.tipe] ? p.tipe : "bank";
+    $("pp-ket").value = p ? p.keterangan || "" : "";
     $("pp-saldo").value = p && p.saldo ? p.saldo.toLocaleString("id-ID") : "";
     $("pp-saldo-lbl").textContent = p ? "Saldo sekarang (Rp) — ubah untuk koreksi" : "Saldo awal (Rp)";
     $("pp-preset").hidden = !!p; $("pp-delete").hidden = !p; $("pp-error").textContent = "";
@@ -124,10 +127,10 @@ export function createPockets({ db, S, $, esc, toast }) {
     if (S.pockets.some((p) => p.id !== pf.id && p.nama.toLowerCase() === nama.toLowerCase())) { $("pp-error").textContent = "Nama pocket ini sudah ada."; return; }
     const ref = pf.id ? doc(db, "users", uid(), "pockets", pf.id) : doc(collection(db, "users", uid(), "pockets"));
     const old = pf.id ? pk(pf.id) : null;
-    const data = { nama, tipe, ikon: POCKET_TYPES[tipe].ikon };
+    const data = { nama, tipe, ikon: POCKET_TYPES[tipe].ikon, keterangan: $("pp-ket").value.trim().slice(0, 80) };
     if (!old) { data.saldo = saldo; data.urutan = S.pockets.length; data.createdAt = serverTimestamp(); }
     else if (saldo !== (old.saldo || 0)) data.saldo = saldo;
-    setDoc(ref, data, { merge: true }).catch((e) => { console.error(e); toast("Pocket gagal tersimpan"); });
+    setDoc(ref, data, { merge: true }).catch((e) => { console.error(e); toast("Pocket gagal tersimpan: " + (e.code || e.message)); });
     closePocketSheet();
     toast(old ? "Pocket diperbarui" : "Pocket ditambahkan 👛");
   };
@@ -261,9 +264,9 @@ export function createPockets({ db, S, $, esc, toast }) {
   }
   function openTxSheet(jenis = "keluar", preset = {}) {
     if (!S.pockets.length) { toast("Buat pocket dulu di menu Pocket ya"); return; }
-    xs.jenis = jenis; xs.cat = preset.cat || null;
+    xs.jenis = jenis; xs.cat = preset.cat || null; xs.gajiId = preset.gajiId || null;
     $("x-nominal").value = preset.nominal ? preset.nominal.toLocaleString("id-ID") : "";
-    $("x-note").value = ""; $("x-fee").value = ""; $("x-alok").checked = false; $("x-error").textContent = "";
+    $("x-note").value = preset.note || ""; $("x-fee").value = ""; $("x-alok").checked = false; $("x-error").textContent = "";
     const t = dateKey(today0());
     $("x-date").min = S.cycle.startKey; $("x-date").max = t; $("x-date").value = t;
     renderTxForm();
@@ -318,6 +321,7 @@ export function createPockets({ db, S, $, esc, toast }) {
       delta[from] = -nominal;
     } else if (j === "masuk") {
       const rec = { ...base, categoryId: xs.cat };
+      if (xs.gajiId && xs.cat === "gaji") rec.gajiId = xs.gajiId;
       if ($("x-alok").checked) {
         rec.alok = splitSalary(nominal, S.envelopes);
         batch.set(cyc, { alokasi: Object.fromEntries(Object.entries(rec.alok).map(([k, v]) => [k, increment(v)])) }, { merge: true });
@@ -339,7 +343,7 @@ export function createPockets({ db, S, $, esc, toast }) {
     }
     applyDelta(batch, delta);
     batch.set(doc(db, "directory", u), { jumlahCatatan: increment(n), lastActive: serverTimestamp() }, { merge: true });
-    batch.commit().catch((e) => { console.error(e); toast("Catatan gagal tersimpan. Coba lagi ya."); });
+    batch.commit().catch((e) => { console.error(e); toast("Catatan gagal tersimpan: " + (e.code || e.message)); });
     ls.set("finix-from-" + j, from);
     closeSheet();
     toast(j === "keluar" ? `${catOf({ jenis: j, categoryId: xs.cat }).ikon} ${fmtRp(nominal)} tercatat dari ${pk(from).nama}`

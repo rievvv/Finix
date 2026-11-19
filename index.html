@@ -122,7 +122,7 @@ input:focus{outline:none;border-color:var(--brand)}
 
 
 /* Catat pengeluaran */
-.sheet-wrap{position:fixed;inset:0;background:rgba(43,27,16,.45);display:flex;align-items:flex-end;justify-content:center;z-index:10}
+.sheet-wrap{position:fixed;inset:0;background:rgba(43,27,16,.45);display:flex;align-items:flex-end;justify-content:center;z-index:50}
 .sheet{background:var(--bg);width:100%;max-width:480px;border-radius:24px 24px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom));max-height:92vh;max-height:92dvh;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .sheet-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .sheet-head h3{font-size:18px;font-weight:800}
@@ -135,7 +135,7 @@ input:focus{outline:none;border-color:var(--brand)}
 .cat.sel{border-color:var(--brand);background:#FFF3E0}
 
 /* Popup kata mutiara */
-.modal{position:fixed;inset:0;background:rgba(43,27,16,.6);display:grid;place-items:center;padding:16px;z-index:30}
+.modal{position:fixed;inset:0;background:rgba(43,27,16,.6);display:grid;place-items:center;padding:16px;z-index:60}
 .quote-card{background:#fff;border-radius:26px;max-width:420px;width:100%;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.35)}
 .quote-top{background:var(--grad);color:#fff;text-align:center;font-weight:800;padding:16px;font-size:15px;letter-spacing:.01em}
 .quote-body{padding:20px 22px 6px}
@@ -377,7 +377,39 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
   body{background:linear-gradient(180deg,#FFF1DC,#FFF7EC)}
 }
 
-.toast{position:fixed;left:50%;bottom:calc(92px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 18px;border-radius:14px;font-weight:600;font-size:14px;z-index:40;max-width:90%;text-align:center}
+.toast{position:fixed;left:50%;bottom:calc(92px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 18px;border-radius:14px;font-weight:600;font-size:14px;z-index:70;max-width:90%;text-align:center}
+
+/* ====== Tabungan, keterangan pocket, edit anggaran ====== */
+.nav-item{min-width:0;font-size:10px}
+@media (min-width:900px){.nav-item{font-size:16px}}
+.pc-note{font-size:12px;color:var(--muted);margin-top:6px;overflow-wrap:anywhere}
+.pc-save{font-size:12px;font-weight:700;margin-top:6px;color:#3367D6}
+.sv-card{display:block;width:100%}
+.sv-head{display:flex;align-items:center;gap:10px;font-weight:800}
+.sv-ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font-size:22px;background:#FFF3E0;flex:none}
+.sv-big{font-size:22px;font-weight:800;margin:10px 0 2px;overflow-wrap:anywhere}
+.sv-pocket{display:inline-block;margin-top:8px;font-size:12px;font-weight:700;background:#E8F0FE;color:#3367D6;padding:3px 10px;border-radius:999px}
+.sv-note{font-size:13px;color:var(--muted);margin-top:8px;overflow-wrap:anywhere}
+.sv-act{display:grid;grid-template-columns:1fr 1fr 44px;gap:8px;margin-top:12px}
+.sv-act .mini-btn{min-height:42px}
+.sv-done{background:var(--hijau-bg);color:var(--hijau);font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:auto}
+.pk-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.pk-row:last-child{border-bottom:0}
+.pk-row .tt{flex:1;min-width:0}
+.pk-row .tt b,.pk-row .tt span{display:block}
+.pk-row .tt span{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.pk-row .r{text-align:right;font-size:12px;color:var(--muted)}
+.pk-row .r b{display:block;font-size:14px;color:var(--ink)}
+.edit-btn{border:0;background:none;font-size:16px;cursor:pointer;min-width:36px;min-height:36px;border-radius:10px;flex:none}
+.edit-btn:hover{background:#FFF3E0}
+.b-name{display:flex;align-items:center;gap:2px;min-width:0;flex:1}
+.b-name>span{min-width:0;overflow-wrap:anywhere}
+.add-cat{width:100%;margin-top:12px;min-height:44px;border:2px dashed var(--line);background:transparent;border-radius:12px;font:inherit;font-weight:700;color:var(--muted);cursor:pointer}
+.add-cat:hover{border-color:var(--brand);color:var(--brand)}
+.gj-row{border:2px solid var(--line);border-radius:16px;padding:12px;margin-bottom:10px;background:#FFFDF9}
+.gj-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.gj-2{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:10px}
+.gj-2 label{margin-bottom:0}
 </style>
 </head>
 <body>
@@ -521,6 +553,23 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
   <div id="pk-list"></div>
 </section>
 
+<!-- ========== TABUNGAN ========== -->
+<section id="screen-savings" class="screen" hidden>
+  <div class="topbar">
+    <div>
+      <div class="mini-brand"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#finix-mark"/></svg>Finix</div>
+      <h2>Tabungan</h2>
+      <div class="muted">Target menabung dan di pocket mana uangnya disimpan</div>
+    </div>
+    <button id="sv-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Target</button>
+  </div>
+  <div id="sv-total"></div>
+  <h3 class="section-title">Target tabunganmu</h3>
+  <div id="sv-list"></div>
+  <h3 class="section-title">Keterangan pocket</h3>
+  <div id="sv-pockets" class="card" style="padding:6px 16px"></div>
+</section>
+
 <!-- ========== RIWAYAT TRANSAKSI ========== -->
 <section id="screen-tx" class="screen" hidden>
   <div class="topbar">
@@ -577,7 +626,13 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       </div>
     </div>
     <div class="col">
-      <h3 class="section-title">Anggaran per kategori <button id="bud-auto" class="mini-btn" type="button">✨ Isi otomatis</button></h3>
+      <h3 class="section-title">Anggaran per pos &amp; kategori</h3>
+      <div class="pk-actions" style="grid-template-columns:repeat(3,1fr)">
+        <button id="bud-add-pos" class="mini-btn brand" type="button">+ Pos</button>
+        <button id="bud-add" class="mini-btn brand" type="button">+ Kategori</button>
+        <button id="bud-auto" class="mini-btn" type="button">✨ Otomatis</button>
+      </div>
+      <div class="muted" style="margin:6px 4px 10px">Ketuk ✏️ di nama pos untuk mengubah nama dan persentasenya, atau ✏️ di kategori untuk mengubah nama, pos, dan nominalnya.</div>
       <div id="bud-groups"></div>
     </div>
   </div>
@@ -630,6 +685,16 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <span style="width:84px"></span>
   </div>
   <div id="pf-avatar" class="avatar-lg">?</div>
+
+  <form id="pf-gaji-form" class="card" novalidate>
+    <h4>💼 Gaji</h4>
+    <div class="muted" style="margin-bottom:12px">Isi semua gajimu: nama, tanggal masuk, dan nominalnya. Gaji pertama menentukan awal siklus anggaran. Total semua gaji dibagi otomatis ke pos-pos.</div>
+    <div id="pf-gaji-list"></div>
+    <button id="pf-gaji-add" class="add-cat" type="button" style="margin-top:0;margin-bottom:12px">+ Tambah gaji</button>
+    <div id="pf-gaji-total" class="muted" style="margin-bottom:10px"></div>
+    <p id="pf-gaji-msg" class="msg" role="status"></p>
+    <button class="btn primary" type="submit">Simpan gaji</button>
+  </form>
 
   <form id="pf-name-form" class="card" novalidate>
     <label>Nama
@@ -710,6 +775,7 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
   <div class="nav-brand"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#finix-mark"/></svg>Finix</div>
   <button class="nav-item" type="button" data-go="dashboard"><span class="ni">📊</span><span>Dashboard</span></button>
   <button class="nav-item" type="button" data-go="pockets"><span class="ni">👛</span><span>Pocket</span></button>
+  <button class="nav-item" type="button" data-go="savings"><span class="ni">🐷</span><span>Tabungan</span></button>
   <button class="nav-item" type="button" data-go="tx"><span class="ni">📒</span><span>Transaksi</span></button>
   <button class="nav-item" type="button" data-go="budget"><span class="ni">🎯</span><span>Anggaran</span></button>
   <button class="nav-item" type="button" data-go="bills"><span class="ni">📅</span><span>Tagihan</span><i class="nav-badge" hidden></i></button>
@@ -783,11 +849,78 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <div id="pp-preset" class="chips wrap"></div>
     <label>Nama pocket<input id="pp-nama" type="text" maxlength="30" placeholder="Contoh: BCA, GoPay, Dompet" autocomplete="off"></label>
     <label>Jenis<select id="pp-tipe" class="sel"></select></label>
+    <label>Keterangan (opsional)<input id="pp-ket" type="text" maxlength="80" placeholder="Contoh: rekening gaji, untuk jajan harian" autocomplete="off"></label>
     <label><span id="pp-saldo-lbl">Saldo awal (Rp)</span><input id="pp-saldo" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
     <div id="pp-hist"></div>
     <p id="pp-error" class="error" role="alert"></p>
     <button id="pp-save" class="btn primary" type="button">Simpan</button>
     <button id="pp-delete" class="btn ghost" type="button" style="margin-top:10px;color:var(--merah)" hidden>Hapus pocket</button>
+  </div>
+</div>
+
+<!-- ========== TARGET TABUNGAN ========== -->
+<div id="saving-sheet" class="sheet-wrap" hidden>
+  <div class="sheet" role="dialog" aria-label="Target tabungan">
+    <div class="sheet-head"><h3 id="sf-title">Tambah target</h3><button id="sf-close" class="link" type="button">Tutup</button></div>
+    <div id="sf-preset" class="chips wrap"></div>
+    <label>Nama target<input id="sf-nama" type="text" maxlength="40" placeholder="Contoh: Liburan Bali" autocomplete="off"></label>
+    <label>Target (Rp)<input id="sf-target" type="text" inputmode="numeric" placeholder="10.000.000" autocomplete="off"></label>
+    <label>Disimpan di pocket<select id="sf-pocket" class="sel"></select></label>
+    <label>Tenggat (opsional)<input id="sf-tenggat" type="date"></label>
+    <label>Keterangan (opsional)<input id="sf-ket" type="text" maxlength="80" placeholder="Catatan singkat tentang tujuan ini" autocomplete="off"></label>
+    <div class="muted" style="margin-bottom:6px;font-weight:600">Ikon</div>
+    <div id="sf-ikon" class="cats"></div>
+    <p id="sf-error" class="error" role="alert"></p>
+    <button id="sf-save" class="btn primary" type="button">Simpan</button>
+    <button id="sf-delete" class="btn ghost" type="button" style="margin-top:10px;color:var(--merah)" hidden>Hapus target</button>
+  </div>
+</div>
+
+<!-- ========== SETOR / AMBIL TABUNGAN ========== -->
+<div id="sv-move-sheet" class="sheet-wrap" hidden>
+  <div class="sheet" role="dialog" aria-label="Setor atau ambil tabungan">
+    <div class="sheet-head"><h3 id="sm-title">Setor tabungan</h3><button id="sm-close" class="link" type="button">Tutup</button></div>
+    <div id="sm-info" class="muted" style="margin-bottom:10px"></div>
+    <input id="sm-nominal" class="nominal" type="text" inputmode="numeric" placeholder="Rp 0" autocomplete="off">
+    <div class="chips">
+      <button class="chip" type="button" data-v="50000">50rb</button>
+      <button class="chip" type="button" data-v="100000">100rb</button>
+      <button class="chip" type="button" data-v="500000">500rb</button>
+      <button class="chip" type="button" data-v="1000000">1jt</button>
+    </div>
+    <p id="sm-error" class="error" role="alert"></p>
+    <button id="sm-save" class="btn primary" type="button">Simpan</button>
+  </div>
+</div>
+
+<!-- ========== UBAH KATEGORI ANGGARAN ========== -->
+<div id="cat-sheet" class="sheet-wrap" hidden>
+  <div class="sheet" role="dialog" aria-label="Kategori anggaran">
+    <div class="sheet-head"><h3 id="cf-title">Ubah kategori</h3><button id="cf-close" class="link" type="button">Tutup</button></div>
+    <label>Nama kategori<input id="cf-nama" type="text" maxlength="24" placeholder="Contoh: Kopi, Skincare, Bensin" autocomplete="off"></label>
+    <label>Masuk ke pos<select id="cf-pos" class="sel"></select></label>
+    <label>Anggaran siklus ini (Rp)<input id="cf-anggaran" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
+    <div class="muted" style="margin-bottom:6px;font-weight:600">Ikon</div>
+    <div id="cf-ikon" class="cats"></div>
+    <p id="cf-error" class="error" role="alert"></p>
+    <button id="cf-save" class="btn primary" type="button">Simpan</button>
+    <button id="cf-delete" class="btn ghost" type="button" style="margin-top:10px;color:var(--merah)" hidden>Hapus kategori</button>
+  </div>
+</div>
+
+<!-- ========== UBAH / TAMBAH POS ========== -->
+<div id="env-sheet" class="sheet-wrap" hidden>
+  <div class="sheet" role="dialog" aria-label="Pos keuangan">
+    <div class="sheet-head"><h3 id="ef-title">Ubah pos</h3><button id="ef-close" class="link" type="button">Tutup</button></div>
+    <label>Nama pos<input id="ef-nama" type="text" maxlength="30" placeholder="Contoh: Kebutuhan Pokok" autocomplete="off"></label>
+    <label>Persentase dari gaji (%)<input id="ef-persen" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="0"></label>
+    <div id="ef-info" class="muted" style="margin:-6px 0 14px"></div>
+    <label id="ef-wrap-harian" class="check"><input id="ef-harian" type="checkbox"><span>Masuk hitungan uang harian (dipakai untuk batas harian dan status Aman/Gawat). Matikan untuk pos seperti tabungan atau cicilan.</span></label>
+    <div class="muted" style="margin-bottom:6px;font-weight:600">Ikon</div>
+    <div id="ef-ikon" class="cats"></div>
+    <p id="ef-error" class="error" role="alert"></p>
+    <button id="ef-save" class="btn primary" type="button">Simpan</button>
+    <button id="ef-delete" class="btn ghost" type="button" style="margin-top:10px;color:var(--merah)" hidden>Hapus pos</button>
   </div>
 </div>
 

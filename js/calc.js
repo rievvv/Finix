@@ -401,3 +401,53 @@ export function forecastBalance({ saldo, tx, cycle, unpaidBills = 0 }) {
   const runway = avg > 0 ? Math.floor(Math.max(0, saldo - unpaidBills) / avg) : null;
   return { avg, proj, runway };
 }
+/* ====================================================================
+   Tabungan (target menabung yang "ditandai" di dalam sebuah pocket)
+   Saldo pocket tidak berubah saat menyetor; dana hanya disisihkan.
+   ==================================================================== */
+
+export const SAVING_PRESETS = [
+  ['Dana Darurat', '🛟'], ['Liburan', '✈️'], ['Gadget', '📱'], ['Kendaraan', '🏍️'],
+  ['Rumah', '🏠'], ['Pendidikan', '🎓'], ['Nikah', '💍'], ['Hari Tua', '🌴'],
+];
+export const SAVING_ICONS = ['🎯', '🛟', '✈️', '📱', '🏍️', '🏠', '🎓', '💍', '🌴', '🎁', '💻', '🏥'];
+
+// Total dana tabungan per pocket: { [pocketId]: nominal }
+export function savedByPocket(savings) {
+  const out = {};
+  savings.forEach((s) => { if (s.pocketId) out[s.pocketId] = (out[s.pocketId] || 0) + (s.terkumpul || 0); });
+  return out;
+}
+
+// Progres satu target; perBulan = setoran per bulan agar tercapai di tenggat (YYYY-MM-DD)
+export function savingProgress(s, today = new Date()) {
+  const target = s.target || 0, got = s.terkumpul || 0;
+  const pct = target > 0 ? Math.min(100, (got / target) * 100) : 0;
+  const sisa = Math.max(0, target - got);
+  let bulan = null, perBulan = null;
+  if (s.tenggat && sisa > 0) {
+    const d = parseKey(s.tenggat);
+    bulan = Math.max(1, (d.getFullYear() - today.getFullYear()) * 12 + (d.getMonth() - today.getMonth()) + (d.getDate() >= today.getDate() ? 1 : 0));
+    perBulan = Math.ceil(sisa / bulan / 1000) * 1000;
+  }
+  return { pct, sisa, bulan, perBulan, tercapai: target > 0 && got >= target };
+}
+
+/* ====================================================================
+   Beberapa gaji per bulan (mis. gaji pertama tgl 25 dan gaji kedua tgl 10)
+   ==================================================================== */
+
+// Daftar gaji profil; akun lama (satu gaji) otomatis dianggap punya satu entri.
+export function gajiList(profile) {
+  if (profile && Array.isArray(profile.gajiList) && profile.gajiList.length) return profile.gajiList;
+  return [{ id: 'g1', nama: 'Gaji', tanggal: (profile && profile.tanggalGajian) || 25, nominal: (profile && profile.gajiBulanan) || 0 }];
+}
+
+// Tanggal gaji (hari ke-N tiap bulan) yang jatuh di dalam siklus ini; null kalau tidak ada.
+export function salaryDateInCycle(cycle, tanggal) {
+  for (let d = new Date(cycle.start); d < cycle.next; d = addDays(d, 1)) {
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    if (d.getDate() === Math.min(tanggal, last)) return d;
+  }
+  return null;
+}

@@ -6,7 +6,7 @@ import {
   fmtRp, parseRp, dateKey, fmtTgl, computeGuard, prevCycle, analyze, compareWithPrevious, cycleTotals,
   avgSpendByCategory, suggestBudgets, planMoney, simulate, paidKey, occurrencesInMonth, occurrencesInRange,
   billStatus, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
-  cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES,
+  cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES, splitSalary, gajiList, salaryDateInCycle,
 } from "./calc.js";
 
 const PALET = ["#FF7A00", "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EC4899", "#14B8A6", "#EF4444"];
@@ -48,11 +48,18 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const unpaid = unpaidInCycle().reduce((a, o) => a + o.bill.nominal, 0);
     const f = forecastBalance({ saldo, tx: S.tx, cycle: c, unpaidBills: unpaid });
     const hs = S.hide.saldo, hg = S.hide.gajian;
-    const gajiBelum = !S.tx.some((t) => t.jenis === "masuk" && t.categoryId === "gaji");
+    // Gaji yang tanggalnya sudah lewat di siklus ini tapi belum dicatat ke pocket
+    let legacy = S.tx.filter((t) => t.jenis === "masuk" && t.categoryId === "gaji" && !t.gajiId).length;
+    const gajiBelum = gajiList(S.profile).filter((g) => {
+      if (S.tx.some((t) => t.jenis === "masuk" && t.categoryId === "gaji" && t.gajiId === g.id)) return false;
+      if (legacy > 0) { legacy--; return false; } // catatan gaji lama (sebelum ada banyak gaji)
+      const due = salaryDateInCycle(c, g.tanggal);
+      return !!due && due <= today0();
+    });
     const dayTxt = c.dayNumber === 1 ? "Hari gajian 🎉" : `H-${c.daysLeft}`;
     const runway = hs ? "" : f.runway === null ? "Belum ada data pengeluaran untuk prakiraan" : `Cukup ±${f.runway} hari dengan pola belanjamu`;
     const nudges = [];
-    if (gajiBelum) nudges.push(`<div class="card nudge"><span>💼 Gaji siklus ini belum dicatat ke pocket.</span><button class="mini-btn brand" type="button" data-act="gaji">Catat gaji ${esc(fmtRp(S.profile.gajiBulanan))}</button></div>`);
+    gajiBelum.forEach((g) => nudges.push(`<div class="card nudge"><span>💼 ${esc(g.nama)} (tgl ${g.tanggal}) belum dicatat ke pocket.</span><button class="mini-btn brand" type="button" data-act="gaji" data-gid="${esc(g.id)}">Catat ${esc(fmtRp(g.nominal))}</button></div>`));
     if (S.pockets.length && saldo === 0 && !S.pockets.some((p) => p.saldo)) nudges.push(`<div class="card nudge"><span>👛 Saldo pocket masih Rp 0. Isi saldo awal tiap pocket supaya dashboard akurat.</span><button class="mini-btn" type="button" data-go="pockets">Buka Pocket</button></div>`);
     $("dash-hero").innerHTML = `
       <div class="card hc hc-saldo"><div class="hc-top"><span>💰 Total saldo</span>${S.eyeBtn("saldo")}</div>
@@ -72,7 +79,9 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
       ${nudges.join("")}`;
   }
   $("dash-hero").addEventListener("click", (e) => {
-    if (e.target.closest('[data-act="gaji"]')) S.openTx("masuk", { nominal: S.profile.gajiBulanan, cat: "gaji" });
+    const b = e.target.closest('[data-act="gaji"]'); if (!b) return;
+    const g = gajiList(S.profile).find((x) => x.id === b.dataset.gid);
+    if (g) S.openTx("masuk", { nominal: g.nominal, cat: "gaji", gajiId: g.id, note: g.nama });
   });
 
   // Arus kas: pemasukan vs pengeluaran, sebaran saldo per pocket, perbandingan antar siklus
@@ -242,11 +251,10 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     S.tx.filter((x) => x.jenis === "keluar").forEach((x) => { spent[x.categoryId] = (spent[x.categoryId] || 0) + x.nominal; });
     $("bud-groups").innerHTML = S.envelopes.map((e) => {
       const cats = S.categories.filter((k) => k.envelopeId === e.id);
-      if (!cats.length) return "";
       const alok = (cd.alokasi || {})[e.id] || 0;
       const sum = cats.reduce((a, k) => a + (k.anggaran || 0), 0);
       const over = sum > alok;
-      return `<div class="card bgroup"><div class="bg-head"><b>${esc(e.ikon)} ${esc(e.nama)}</b>
+      return `<div class="card bgroup"><div class="bg-head"><span class="b-name"><b>${esc(e.ikon)} ${esc(e.nama)}</b><button class="edit-btn" type="button" data-epos="${esc(e.id)}" aria-label="Ubah pos ${esc(e.nama)}">✏️</button></span>
         <small class="${over ? "bad-t" : ""}">Anggaran ${fmtRp(sum)} dari ${fmtRp(alok)}${over ? " ⚠️" : ""}</small></div>
         ${cats.map((k) => {
           const b = k.anggaran || 0, u = spent[k.id] || 0;
@@ -257,11 +265,11 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
             : u > b ? `Lebih ${fmtRp(u - b)} dari anggaran`
             : `Terpakai ${fmtRp(u)} · sisa ${fmtRp(b - u)}`;
           const warn = proy > b * 1.05 && u <= b ? ` · <span class="bad-t">perkiraan lewat ±${fmtRp(proy - b)}</span>` : "";
-          return `<div class="brow"><div class="b-top"><span>${esc(k.ikon)} ${esc(k.nama)}</span>
+          return `<div class="brow"><div class="b-top"><span class="b-name"><span>${esc(k.ikon)} ${esc(k.nama)}</span><button class="edit-btn" type="button" data-ecat="${esc(k.id)}" aria-label="Ubah kategori ${esc(k.nama)}">✏️</button></span>
             <input class="b-in" data-cat="${esc(k.id)}" data-orig="${b}" inputmode="numeric" autocomplete="off" placeholder="Atur Rp" value="${b ? b.toLocaleString("id-ID") : ""}" aria-label="Anggaran ${esc(k.nama)}"></div>
             <div class="bar"><i style="width:${Math.min(100, r * 100)}%;background:${warna}"></i></div>
             <div class="muted b-sub">${sub}${warn}</div></div>`;
-        }).join("")}</div>`;
+        }).join("")}${cats.length ? "" : `<div class="empty" style="padding:8px">Belum ada kategori di pos ini.</div>`}<button class="add-cat" type="button" data-addcat="${esc(e.id)}">+ Tambah kategori di pos ini</button></div>`;
     }).join("");
     renderSim();
   }
@@ -280,7 +288,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     if (n > 999999999) { toast("Nominalnya terlalu besar"); return; }
     cat.anggaran = n;
     setDoc(doc(db, "users", S.user.uid, "categories", cat.id), { anggaran: n }, { merge: true })
-      .catch((err) => { console.error(err); toast("Anggaran gagal tersimpan"); });
+      .catch((err) => { console.error(err); toast("Anggaran gagal tersimpan: " + (err.code || err.message)); });
     renderBudget();
     if (next) { const nx = document.querySelector(`.b-in[data-cat="${CSS.escape(next)}"]`); if (nx) nx.focus(); }
   });
@@ -298,6 +306,151 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     batch.commit().catch((err) => { console.error(err); toast("Gagal menyimpan saran"); });
     renderBudget();
     toast(Object.keys(history).length ? "Anggaran diisi dari kebiasaanmu bulan lalu ✨" : "Anggaran dibagi rata sesuai pos ✨");
+  });
+
+  /* ---------- Ubah / tambah / hapus kategori dan ubah nama pos ---------- */
+  const IKON_KATEGORI = ["🍜", "🛵", "🛒", "📱", "🧋", "🎮", "🧾", "🆘", "☕", "👕", "💊", "🎬", "📚", "🐾", "⛽", "🎁", "💇", "🏋️", "🏠", "💡"];
+  const IKON_POS = ["🍚", "🧾", "🛟", "🎈", "💼", "🏠", "🚗", "🎓", "🏥", "✈️", "🎯", "💰"];
+  const cf = { id: null, ikon: "🧋" };
+  const ef = { id: null, ikon: "🍚" };
+  const renderPick = (box, cur) => $(box).querySelectorAll("button").forEach((b) => b.classList.toggle("sel", b.dataset.i === cur));
+  $("cf-ikon").innerHTML = IKON_KATEGORI.map((i) => `<button type="button" class="cat" data-i="${i}" style="min-height:52px"><span style="font-size:22px">${i}</span></button>`).join("");
+  $("ef-ikon").innerHTML = IKON_POS.map((i) => `<button type="button" class="cat" data-i="${i}" style="min-height:52px"><span style="font-size:22px">${i}</span></button>`).join("");
+  $("cf-ikon").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { cf.ikon = b.dataset.i; renderPick("cf-ikon", cf.ikon); } });
+  $("ef-ikon").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { ef.ikon = b.dataset.i; renderPick("ef-ikon", ef.ikon); } });
+  $("cf-anggaran").addEventListener("input", () => fmtInput($("cf-anggaran")));
+
+  function openCatSheet(cat, envId) {
+    cf.id = cat ? cat.id : null; cf.ikon = cat ? cat.ikon || "🧋" : "🧋";
+    $("cf-title").textContent = cat ? "Ubah kategori" : "Tambah kategori";
+    $("cf-nama").value = cat ? cat.nama : "";
+    $("cf-pos").innerHTML = S.envelopes.map((e) => `<option value="${esc(e.id)}">${esc(e.ikon)} ${esc(e.nama)}</option>`).join("");
+    $("cf-pos").value = cat ? cat.envelopeId : (envId || (S.envelopes[0] || {}).id);
+    $("cf-anggaran").value = cat && cat.anggaran ? cat.anggaran.toLocaleString("id-ID") : "";
+    $("cf-delete").hidden = !cat; $("cf-error").textContent = "";
+    renderPick("cf-ikon", cf.ikon);
+    $("cat-sheet").hidden = false;
+    if (!cat) setTimeout(() => $("cf-nama").focus(), 50);
+  }
+  const closeCatSheet = () => { $("cat-sheet").hidden = true; };
+  $("cf-close").onclick = closeCatSheet;
+  $("cat-sheet").addEventListener("click", (e) => { if (e.target === $("cat-sheet")) closeCatSheet(); });
+  $("bud-add").onclick = () => openCatSheet(null, null);
+
+  $("cf-save").onclick = () => {
+    const nama = $("cf-nama").value.trim().slice(0, 24), envelopeId = $("cf-pos").value, anggaran = parseRp($("cf-anggaran").value);
+    const err = $("cf-error");
+    if (!nama) { err.textContent = "Nama kategorinya diisi dulu ya."; return; }
+    if (!S.envelopes.some((e) => e.id === envelopeId)) { err.textContent = "Pilih pos untuk kategori ini."; return; }
+    if (anggaran > 999999999) { err.textContent = "Nominalnya terlalu besar."; return; }
+    if (S.categories.some((k) => k.id !== cf.id && k.nama.toLowerCase() === nama.toLowerCase())) { err.textContent = "Nama kategori ini sudah ada."; return; }
+    const uid = S.user.uid;
+    const old = cf.id ? S.categories.find((k) => k.id === cf.id) : null;
+    const id = old ? old.id : doc(collection(db, "users", uid, "categories")).id;
+    const urutan = old ? (old.urutan ?? 0) : Math.max(-1, ...S.categories.map((k) => k.urutan ?? 0)) + 1;
+    const data = { ...(old || {}), id, nama, ikon: cf.ikon, envelopeId, anggaran, urutan };
+    if (old) Object.assign(old, data); else S.categories.push(data);
+    S.categories.sort((a, b) => (a.urutan ?? 0) - (b.urutan ?? 0));
+    setDoc(doc(db, "users", uid, "categories", id), data, { merge: true }).catch((e2) => { console.error(e2); toast("Kategori gagal tersimpan: " + (e2.code || e2.message)); });
+    closeCatSheet(); renderBudget();
+    toast(old ? "Kategori diperbarui" : "Kategori ditambahkan ✨");
+  };
+
+  $("cf-delete").onclick = () => {
+    const cat = S.categories.find((k) => k.id === cf.id); if (!cat) return;
+    if (S.categories.length <= 1) { $("cf-error").textContent = "Minimal harus ada satu kategori."; return; }
+    if (!confirm(`Hapus kategori “${cat.nama}”? Catatan lama dengan kategori ini tetap ada dan tampil sebagai “Lainnya”.`)) return;
+    S.categories = S.categories.filter((k) => k.id !== cat.id);
+    deleteDoc(doc(db, "users", S.user.uid, "categories", cat.id)).catch((e2) => { console.error(e2); toast("Gagal menghapus"); });
+    closeCatSheet(); renderBudget(); toast("Kategori dihapus");
+  };
+
+  // Hitung ulang jatah tiap pos di siklus berjalan setelah persentase / daftar pos berubah.
+  // Tambahan manual (pemasukan yang "ditambahkan ke jatah anggaran") tetap dipertahankan.
+  S.recalcCycle = (batch, oldEnvelopes) => {
+    const cd = S.cycleDoc; if (!cd || !S.cycle) return;
+    const total = S.profile.gajiBulanan;
+    const oldSplit = splitSalary(cd.gajiMasuk ?? total, oldEnvelopes);
+    const newSplit = splitSalary(total, S.envelopes);
+    const alokasi = {};
+    S.envelopes.forEach((e) => {
+      const extra = ((cd.alokasi || {})[e.id] || 0) - (oldSplit[e.id] || 0);
+      alokasi[e.id] = Math.max(0, newSplit[e.id] + extra);
+    });
+    batch.update(doc(db, "users", S.user.uid, "cycles", S.cycle.id), { alokasi, gajiMasuk: total });
+  };
+
+  const totalPersen = (exceptId, plus) => S.envelopes.filter((e) => e.id !== exceptId).reduce((a, e) => a + (e.persen || 0), 0) + plus;
+  function updateEnvInfo() {
+    const n = Number($("ef-persen").value) || 0, tot = totalPersen(ef.id, n);
+    const rp = Math.floor(((S.profile.gajiBulanan || 0) * n) / 100);
+    const el = $("ef-info");
+    el.innerHTML = `${n ? `≈ ${fmtRp(rp)} per siklus. ` : ""}` + (tot > 100 ? `<span class="bad-t">Total semua pos ${tot}%, melebihi 100%. Kurangi dulu.</span>`
+      : tot < 100 ? `Total semua pos ${tot}%. Sisa ${100 - tot}% otomatis masuk ke pos Dana Bebas.` : "Total semua pos 100% 👍");
+  }
+  $("ef-persen").addEventListener("input", updateEnvInfo);
+
+  function openEnvSheet(env) {
+    ef.id = env ? env.id : null; ef.ikon = env ? env.ikon || "🍚" : "🎯";
+    $("ef-title").textContent = env ? "Ubah pos" : "Tambah pos";
+    $("ef-nama").value = env ? env.nama : "";
+    $("ef-persen").value = env ? env.persen ?? 0 : Math.max(0, 100 - totalPersen(null, 0));
+    $("ef-harian").checked = env ? !!env.untukHarian : false;
+    $("ef-delete").hidden = !env; $("ef-error").textContent = "";
+    renderPick("ef-ikon", ef.ikon);
+    updateEnvInfo();
+    $("env-sheet").hidden = false;
+    if (!env) setTimeout(() => $("ef-nama").focus(), 50);
+  }
+  const closeEnvSheet = () => { $("env-sheet").hidden = true; };
+  $("ef-close").onclick = closeEnvSheet;
+  $("env-sheet").addEventListener("click", (e) => { if (e.target === $("env-sheet")) closeEnvSheet(); });
+  $("bud-add-pos").onclick = () => openEnvSheet(null);
+
+  $("ef-save").onclick = () => {
+    const err = $("ef-error");
+    const old = ef.id ? S.envelopes.find((e) => e.id === ef.id) : null;
+    const nama = $("ef-nama").value.trim().slice(0, 30);
+    const persen = Number($("ef-persen").value);
+    if (!nama) { err.textContent = "Nama posnya diisi dulu ya."; return; }
+    if (!Number.isInteger(persen) || persen < 0 || persen > 100) { err.textContent = "Persentase antara 0 sampai 100 (bilangan bulat) ya."; return; }
+    if (S.envelopes.some((e) => e.id !== ef.id && e.nama.toLowerCase() === nama.toLowerCase())) { err.textContent = "Nama pos ini sudah ada."; return; }
+    if (totalPersen(ef.id, persen) > 100) { err.textContent = "Total persentase semua pos tidak boleh lebih dari 100%."; return; }
+    const uid = S.user.uid, oldEnvs = S.envelopes.map((e) => ({ ...e }));
+    const id = old ? old.id : doc(collection(db, "users", uid, "envelopes")).id;
+    const harian = $("ef-harian").checked;
+    const data = { ...(old || { tipe: "lain", warna: PALET[S.envelopes.length % PALET.length] }), id, nama, ikon: ef.ikon, persen, untukHarian: harian };
+    if (old) Object.assign(old, data); else S.envelopes.push(data);
+    const batch = writeBatch(db);
+    batch.set(doc(db, "users", uid, "envelopes", id), data, { merge: true });
+    S.recalcCycle(batch, oldEnvs);
+    batch.commit().catch((e2) => { console.error(e2); toast("Pos gagal tersimpan: " + (e2.code || e2.message)); });
+    closeEnvSheet(); renderBudget();
+    toast(old ? "Pos diperbarui" : "Pos ditambahkan ✨");
+  };
+
+  $("ef-delete").onclick = () => {
+    const env = S.envelopes.find((e) => e.id === ef.id); if (!env) return;
+    const err = $("ef-error");
+    if (S.envelopes.length <= 1) { err.textContent = "Minimal harus ada satu pos."; return; }
+    if (S.categories.some((k) => k.envelopeId === env.id)) { err.textContent = "Pos ini masih punya kategori. Pindahkan atau hapus kategorinya dulu."; return; }
+    if (!confirm(`Hapus pos “${env.nama}”? Jatahnya (${env.persen || 0}%) dihitung ulang ke pos lain. Catatan lama tidak berubah.`)) return;
+    const oldEnvs = S.envelopes.map((e) => ({ ...e }));
+    S.envelopes = S.envelopes.filter((e) => e.id !== env.id);
+    const batch = writeBatch(db);
+    batch.delete(doc(db, "users", S.user.uid, "envelopes", env.id));
+    S.recalcCycle(batch, oldEnvs);
+    batch.commit().catch((e2) => { console.error(e2); toast("Gagal menghapus pos: " + (e2.code || e2.message)); });
+    closeEnvSheet(); renderBudget(); toast("Pos dihapus");
+  };
+
+  $("bud-groups").addEventListener("click", (e) => {
+    const c = e.target.closest("[data-ecat]");
+    if (c) { const cat = S.categories.find((k) => k.id === c.dataset.ecat); if (cat) openCatSheet(cat); return; }
+    const p = e.target.closest("[data-epos]");
+    if (p) { const env = S.envelopes.find((x) => x.id === p.dataset.epos); if (env) openEnvSheet(env); return; }
+    const a = e.target.closest("[data-addcat]");
+    if (a) openCatSheet(null, a.dataset.addcat);
   });
 
   // Simulator
@@ -498,7 +651,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const uid = S.user.uid;
     const ref = bf.id ? doc(db, "users", uid, "bills", bf.id) : doc(collection(db, "users", uid, "bills"));
     if (!bf.id) { data.paid = {}; data.createdAt = serverTimestamp(); }
-    setDoc(ref, data, { merge: true }).catch((e2) => { console.error(e2); toast("Tagihan gagal tersimpan"); });
+    setDoc(ref, data, { merge: true }).catch((e2) => { console.error(e2); toast("Tagihan gagal tersimpan: " + (e2.code || e2.message)); });
     closeBillSheet();
     toast(bf.id ? "Tagihan diperbarui" : "Tagihan ditambahkan 🧾");
     if (data.tipe === "sekali") { const d = parseKey(data.tanggalSekali); cal.y = d.getFullYear(); cal.m = d.getMonth(); cal.sel = data.tanggalSekali; }

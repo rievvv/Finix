@@ -13,10 +13,11 @@ import {
 import { firebaseConfig } from "./firebase-config.js";
 import {
   DEFAULT_ENVELOPES, DEFAULT_CATEGORIES, fmtRp, parseRp, dateKey, fmtTgl,
-  getCycle, splitSalary, computeGuard, prevCycle,
+  getCycle, splitSalary, computeGuard, prevCycle, gajiList,
 } from "./calc.js";
 import { createFeatures } from "./features.js";
 import { createPockets } from "./pockets.js";
+import { createSavings } from "./savings.js";
 import { QUOTES } from "./quotes.js";
 
 /* Username admin (tanpa "@") dipetakan ke email ini di Firebase Authentication.
@@ -33,14 +34,14 @@ const db = initializeFirestore(app, {
 /* ---------- Helper & state ---------- */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const S = { user: null, profile: null, envelopes: [], categories: [], cycle: null, cycleDoc: null, tx: [], txAll: [], bills: [], pockets: [], unsub: [], dir: [] };
+const S = { user: null, profile: null, envelopes: [], categories: [], cycle: null, cycleDoc: null, tx: [], txAll: [], bills: [], pockets: [], savings: [], unsub: [], dir: [] };
 const STATUS_LABEL = { hijau: "Aman 🟢", kuning: "Hati-hati 🟡", merah: "Gawat 🔴" };
 const initial = (nama) => (String(nama || "").trim().charAt(0) || "?").toUpperCase();
 let pendingName = ""; // nama dari form daftar, dipakai saat onboarding
 
-const SCREENS = ["auth", "onboard", "dashboard", "pockets", "tx", "budget", "bills", "profile", "admin"];
-const MENU = ["dashboard", "pockets", "tx", "budget", "bills", "profile"]; // layar yang memakai menu utama
-const BISA_CATAT = ["dashboard", "pockets", "tx", "budget", "bills"];
+const SCREENS = ["auth", "onboard", "dashboard", "pockets", "savings", "tx", "budget", "bills", "profile", "admin"];
+const MENU = ["dashboard", "pockets", "savings", "tx", "budget", "bills", "profile"]; // layar yang memakai menu utama
+const BISA_CATAT = ["dashboard", "pockets", "savings", "tx", "budget", "bills"];
 let currentScreen = "auth";
 function show(name) {
   currentScreen = name;
@@ -66,7 +67,7 @@ function bindMoney(el) {
 }
 function teardown() {
   S.unsub.forEach((f) => f());
-  S.unsub = []; S.cycleDoc = null; S.tx = []; S.txAll = []; S.bills = []; S.pockets = [];
+  S.unsub = []; S.cycleDoc = null; S.tx = []; S.txAll = []; S.bills = []; S.pockets = []; S.savings = [];
 }
 function setMsg(id, text, ok = false) {
   const el = $(id);
@@ -261,13 +262,13 @@ $("ob-form").addEventListener("submit", async (e) => {
   try {
     const uid = S.user.uid;
     const batch = writeBatch(db);
-    batch.set(doc(db, "users", uid), { nama, email: S.user.email || "", gajiBulanan: gaji, tanggalGajian: tgl, createdAt: serverTimestamp() });
+    batch.set(doc(db, "users", uid), { nama, email: S.user.email || "", gajiBulanan: gaji, tanggalGajian: tgl, gajiList: [{ id: "g1", nama: "Gaji", tanggal: tgl, nominal: gaji }], createdAt: serverTimestamp() });
     // Direktori: data akun saja (tanpa nominal gaji/pengeluaran), dipakai dashboard admin
     batch.set(doc(db, "directory", uid), { nama, email: S.user.email || "", createdAt: serverTimestamp(), lastActive: serverTimestamp(), jumlahCatatan: 0 });
     DEFAULT_ENVELOPES.forEach((en) => batch.set(doc(db, "users", uid, "envelopes", en.id), en));
     DEFAULT_CATEGORIES.forEach((c, i) => batch.set(doc(db, "users", uid, "categories", c.id), { ...c, urutan: i }));
     await batch.commit();
-    S.profile = { nama, gajiBulanan: gaji, tanggalGajian: tgl };
+    S.profile = { nama, gajiBulanan: gaji, tanggalGajian: tgl, gajiList: [{ id: "g1", nama: "Gaji", tanggal: tgl, nominal: gaji }] };
     await startHome();
   } catch (error) {
     console.error(error);
@@ -300,10 +301,12 @@ document.addEventListener("click", (e) => {
 });
 const F = createFeatures({ db, S, $, esc, toast, go });
 const P = createPockets({ db, S, $, esc, toast });
+const SV = createSavings({ db, S, $, esc, toast });
 function renderOthers() {
   F.renderHomeBills();
   if (currentScreen === "dashboard") F.renderDashboard();
   else if (currentScreen === "pockets") P.renderPockets();
+  else if (currentScreen === "savings") SV.renderSavings();
   else if (currentScreen === "tx") P.renderTx();
   else if (currentScreen === "budget") F.renderBudget();
   else if (currentScreen === "bills") F.renderBills();
@@ -340,6 +343,7 @@ async function startHome() {
   ));
   S.unsub.push(F.listenBills(renderOthers));
   S.unsub.push(P.listen(render));
+  S.unsub.push(SV.listen(render));
 }
 
 // Catat "terakhir aktif" dan sinkronkan email (kalau user baru saja menggantinya)
@@ -400,7 +404,8 @@ $("open-profile").onclick = () => {
   $("pf-avatar").textContent = initial(S.profile?.nama);
   $("pf-email-now").textContent = S.user.email || "";
   ["pf-email-new", "pf-email-pw", "pf-pass-cur", "pf-pass-new"].forEach((id) => { $(id).value = ""; });
-  ["pf-name-msg", "pf-email-msg", "pf-pass-msg"].forEach((id) => setMsg(id, ""));
+  ["pf-name-msg", "pf-email-msg", "pf-pass-msg", "pf-gaji-msg"].forEach((id) => setMsg(id, ""));
+  loadGaji();
   show("profile");
 };
 $("pf-back").onclick = () => go("dashboard");
@@ -465,6 +470,67 @@ $("pf-pass-form").addEventListener("submit", async (e) => {
   } catch (err) {
     console.error(err);
     setMsg("pf-pass-msg", authMsg(err.code, "reauth"));
+  }
+});
+
+/* ---------- Gaji (bisa lebih dari satu) ---------- */
+let gj = [];
+const newGajiId = () => "g" + Math.random().toString(36).slice(2, 8);
+function loadGaji() {
+  gj = gajiList(S.profile).map((g) => ({ id: g.id || newGajiId(), nama: g.nama || "", tanggal: g.tanggal, nominal: g.nominal ? Number(g.nominal).toLocaleString("id-ID") : "" }));
+  renderGaji();
+}
+function renderGaji() {
+  $("pf-gaji-list").innerHTML = gj.map((g, i) => `<div class="gj-row" data-i="${i}">
+    <div class="gj-top"><b>${i === 0 ? "Gaji pertama (awal siklus)" : "Gaji ke-" + (i + 1)}</b>${gj.length > 1 ? `<button class="del-btn" type="button" data-gdel="${i}" aria-label="Hapus gaji ini">🗑</button>` : ""}</div>
+    <input class="gj-nama" type="text" maxlength="24" placeholder="Nama, mis. Gaji pokok / Freelance" value="${esc(g.nama)}" autocomplete="off">
+    <div class="gj-2"><label>Tanggal<input class="gj-tgl" type="number" inputmode="numeric" min="1" max="31" value="${esc(g.tanggal ?? "")}" placeholder="25"></label>
+    <label>Nominal (Rp)<input class="gj-nom" type="text" inputmode="numeric" value="${esc(g.nominal)}" placeholder="5.000.000" autocomplete="off"></label></div></div>`).join("");
+  updateGajiTotal();
+}
+function updateGajiTotal() {
+  const total = gj.reduce((a, g) => a + parseRp(g.nominal), 0);
+  $("pf-gaji-total").innerHTML = `Total gaji per bulan: <b>${fmtRp(total)}</b>`;
+}
+$("pf-gaji-list").addEventListener("input", (e) => {
+  const row = e.target.closest(".gj-row"); if (!row) return;
+  const g = gj[Number(row.dataset.i)]; if (!g) return;
+  if (e.target.classList.contains("gj-nama")) g.nama = e.target.value;
+  else if (e.target.classList.contains("gj-tgl")) g.tanggal = e.target.value;
+  else if (e.target.classList.contains("gj-nom")) {
+    const n = parseRp(e.target.value);
+    e.target.value = n ? n.toLocaleString("id-ID") : "";
+    g.nominal = e.target.value; updateGajiTotal();
+  }
+});
+$("pf-gaji-list").addEventListener("click", (e) => {
+  const d = e.target.closest("[data-gdel]"); if (!d) return;
+  gj.splice(Number(d.dataset.gdel), 1); renderGaji();
+});
+$("pf-gaji-add").onclick = () => { gj.push({ id: newGajiId(), nama: "", tanggal: "", nominal: "" }); renderGaji(); };
+
+$("pf-gaji-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const list = gj.map((g, i) => ({ id: g.id, nama: (g.nama || "").trim().slice(0, 24) || (i === 0 ? "Gaji" : "Gaji " + (i + 1)), tanggal: Number(g.tanggal), nominal: parseRp(g.nominal) }));
+  for (const [i, g] of list.entries()) {
+    if (!Number.isInteger(g.tanggal) || g.tanggal < 1 || g.tanggal > 31) { setMsg("pf-gaji-msg", `Tanggal gaji ke-${i + 1} antara 1 sampai 31 ya.`); return; }
+    if (g.nominal < 1000 || g.nominal >= 1e9) { setMsg("pf-gaji-msg", `Isi nominal gaji ke-${i + 1} dulu ya.`); return; }
+  }
+  setMsg("pf-gaji-msg", "");
+  const total = list.reduce((a, g) => a + g.nominal, 0);
+  const geserSiklus = list[0].tanggal !== S.profile.tanggalGajian;
+  const oldEnvs = S.envelopes.map((en) => ({ ...en }));
+  try {
+    S.profile.gajiList = list; S.profile.gajiBulanan = total; S.profile.tanggalGajian = list[0].tanggal;
+    const batch = writeBatch(db);
+    batch.set(doc(db, "users", S.user.uid), { gajiList: list, gajiBulanan: total, tanggalGajian: list[0].tanggal }, { merge: true });
+    if (!geserSiklus) S.recalcCycle(batch, oldEnvs); // jatah pos siklus ini ikut menyesuaikan total gaji baru
+    await batch.commit();
+    setMsg("pf-gaji-msg", geserSiklus ? "Gaji tersimpan ✅ Siklus mengikuti tanggal gaji pertama, memuat ulang…" : "Gaji tersimpan ✅ Jatah pos sudah dihitung ulang.", true);
+    if (geserSiklus) setTimeout(() => location.reload(), 900);
+  } catch (err) {
+    console.error(err);
+    setMsg("pf-gaji-msg", "Gagal menyimpan: " + (err.code || err.message));
   }
 });
 
