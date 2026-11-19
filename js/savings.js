@@ -169,5 +169,28 @@ export function createSavings({ db, S, $, esc, toast }) {
     if (b.dataset.act === "edit") openSheet(x); else openMove(x, b.dataset.act);
   });
 
+  (S.exporters = S.exporters || {}).Tabungan = {
+    bangun: () => {
+      const saved = savedByPocket(S.savings);
+      const baris = S.savings.map((x) => {
+        const g = savingProgress(x), p = pk(x.pocketId);
+        return [x.nama, p ? p.nama : "(belum dipilih)", x.target || 0, x.terkumpul || 0, g.sisa, { v: g.pct, t: "pct" }, x.tenggat ? fmtTgl(parseKey(x.tenggat)) : "-", g.perBulan || 0, g.tercapai ? "Tercapai" : "Berjalan", x.keterangan || ""];
+      });
+      const pockets = S.pockets.map((p) => { const sd = saved[p.id] || 0, saldo = p.saldo || 0; return [p.nama, saldo, sd, saldo - sd]; });
+      return {
+        periode: `Posisi per ${fmtTgl(new Date())}`,
+        sheets: [
+          { nama: "Target Tabungan",
+            kolom: [{ h: "Target", w: 22 }, { h: "Disimpan di", w: 16 }, { h: "Target", w: 16, t: "rp" }, { h: "Terkumpul", w: 16, t: "rp" }, { h: "Kurang", w: 16, t: "rp" }, { h: "Progres", w: 10, t: "pct" }, { h: "Tenggat", w: 13 }, { h: "Perlu / bulan", w: 15, t: "rp" }, { h: "Status", w: 11 }, { h: "Keterangan", w: 26 }],
+            baris,
+            ringkas: [["Total terkumpul", S.savings.reduce((a, x) => a + (x.terkumpul || 0), 0)], ["Total target", S.savings.reduce((a, x) => a + (x.target || 0), 0)]] },
+          { nama: "Per Pocket",
+            kolom: [{ h: "Pocket", w: 22 }, { h: "Saldo", w: 16, t: "rp" }, { h: "Ditabung", w: 16, t: "rp" }, { h: "Saldo bebas", w: 16, t: "rp" }],
+            baris: pockets },
+        ],
+      };
+    },
+  };
+
   return { listen, renderSavings };
 }

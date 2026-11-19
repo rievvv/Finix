@@ -155,18 +155,62 @@ export function createPockets({ db, S, $, esc, toast }) {
     if (tf.period === "all") { let c = S.cycle; for (let i = 0; i < 5; i++) c = prevCycle(c, tgl); return [c.startKey, S.cycle.endKey]; }
     return [S.cycle.startKey, S.cycle.endKey];
   }
-  function renderTx() {
-    if (!S.profile || !S.cycle) return;
-    document.querySelectorAll("#tx-jenis button").forEach((b) => b.classList.toggle("active", b.dataset.j === tf.jenis));
-    $("tx-pocket").innerHTML = `<option value="all">Semua pocket</option>` + S.pockets.map((p) => `<option value="${esc(p.id)}">${esc(pkIcon(p) + " " + p.nama)}</option>`).join("");
-    $("tx-pocket").value = S.pockets.some((p) => p.id === tf.pocket) ? tf.pocket : "all";
+  // Transaksi sesuai filter yang sedang tampil di layar (dipakai tampilan dan export)
+  function txTersaring() {
     const [a, b] = txRange();
     const q = $("tx-q").value.trim().toLowerCase();
     let rows = S.txAll.filter((t) => t.hariKe >= a && t.hariKe <= b);
     if (tf.jenis !== "all") rows = rows.filter((t) => t.jenis === tf.jenis);
     if (tf.pocket !== "all") rows = rows.filter((t) => t.pocketId === tf.pocket || t.pocketTujuanId === tf.pocket);
     if (q) rows = rows.filter((t) => `${catOf(t).nama} ${t.catatan || ""} ${pkLabel(t.pocketId)} ${pkLabel(t.pocketTujuanId)}`.toLowerCase().includes(q));
-    rows.sort((x, y) => millis(y) - millis(x));
+    return rows.sort((x, y) => millis(y) - millis(x));
+  }
+  const JENIS_TX = { keluar: "Pengeluaran", masuk: "Pemasukan", transfer: "Transfer", tarik: "Tarik tunai" };
+  (S.exporters = S.exporters || {}).Transaksi = {
+    hint: () => "Mengikuti filter yang sedang tampil di halaman Transaksi (periode, jenis, pocket, dan pencarian).",
+    bangun: () => {
+      const rows = txTersaring(), [a, b] = txRange();
+      const inc = rows.filter((t) => t.jenis === "masuk").reduce((x, t) => x + t.nominal, 0);
+      const exp = rows.filter((t) => t.jenis === "keluar").reduce((x, t) => x + t.nominal, 0);
+      const bersihPk = (id) => { const p = pk(id); return p ? p.nama : ""; };
+      return {
+        periode: `${fmtTgl(parseKey(a))} - ${fmtTgl(parseKey(b))}`,
+        sheets: [{
+          nama: "Transaksi",
+          kolom: [{ h: "Tanggal", w: 13 }, { h: "Jam", w: 8 }, { h: "Jenis", w: 13 }, { h: "Kategori", w: 18 }, { h: "Dari pocket", w: 16 }, { h: "Ke pocket", w: 16 }, { h: "Nominal", w: 16, t: "rp" }, { h: "Catatan", w: 30 }],
+          baris: rows.map((t) => {
+            const d = t.tanggal && t.tanggal.toDate ? t.tanggal.toDate() : parseKey(t.hariKe);
+            const kat = t.jenis === "transfer" ? "-" : t.jenis === "tarik" ? "Tarik tunai" : catOf(t).nama;
+            return [fmtTgl(parseKey(t.hariKe)), d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }).replace(":", "."), JENIS_TX[t.jenis] || t.jenis, kat, bersihPk(t.pocketId), bersihPk(t.pocketTujuanId), t.nominal, t.catatan || ""];
+          }),
+          ringkas: [["Total pemasukan", inc], ["Total pengeluaran", exp], ["Selisih", inc - exp], ["Jumlah catatan", rows.length, "angka"]],
+        }],
+      };
+    },
+  };
+  (S.exporters = S.exporters || {}).Pocket = {
+    bangun: () => {
+      const saved = savedByPocket(S.savings), now = new Date();
+      const baris = S.pockets.map((p) => { const sd = saved[p.id] || 0, saldo = p.saldo || 0; return [p.nama, tp(p).label, p.keterangan || "", saldo, sd, saldo - sd]; });
+      const tot = (i) => baris.reduce((x, r) => x + r[i], 0);
+      return {
+        periode: `Posisi per ${fmtTgl(now)}`,
+        sheets: [{
+          nama: "Pocket",
+          kolom: [{ h: "Pocket", w: 22 }, { h: "Jenis", w: 12 }, { h: "Keterangan", w: 28 }, { h: "Saldo", w: 16, t: "rp" }, { h: "Ditabung", w: 16, t: "rp" }, { h: "Saldo bebas", w: 16, t: "rp" }],
+          baris,
+          ringkas: [["Total saldo", tot(3)], ["Total ditabung", tot(4)], ["Total saldo bebas", tot(5)]],
+        }],
+      };
+    },
+  };
+
+  function renderTx() {
+    if (!S.profile || !S.cycle) return;
+    document.querySelectorAll("#tx-jenis button").forEach((b) => b.classList.toggle("active", b.dataset.j === tf.jenis));
+    $("tx-pocket").innerHTML = `<option value="all">Semua pocket</option>` + S.pockets.map((p) => `<option value="${esc(p.id)}">${esc(pkIcon(p) + " " + p.nama)}</option>`).join("");
+    $("tx-pocket").value = S.pockets.some((p) => p.id === tf.pocket) ? tf.pocket : "all";
+    const rows = txTersaring();
     const inc = rows.filter((t) => t.jenis === "masuk").reduce((s, t) => s + t.nominal, 0);
     const exp = rows.filter((t) => t.jenis === "keluar").reduce((s, t) => s + t.nominal, 0);
     $("tx-sum").innerHTML = `
@@ -247,15 +291,21 @@ export function createPockets({ db, S, $, esc, toast }) {
   }
   const viaTagihan = () => xs.jenis === "keluar" && xs.via === "tagihan";
   function infoTagihan() {
-    const n = Number($("x-t-tenor").value), biaya = parseRp($("x-t-biaya").value), y = Number($("x-t-thn").value), m = Number($("x-t-bln").value), h = Number($("x-t-hari").value);
-    if (!n || !biaya || !y) { $("x-t-info").textContent = ""; return; }
-    const akhir = new Date(y, m + n - 1, 1);
-    $("x-t-info").innerHTML = `Tercatat di Kalender Tagihan: <b>${n} × ${fmtRp(biaya)}</b>${h ? `, tiap tanggal ${h}` : ""}<br>${BULAN_PANJANG[m]} ${y} sampai ${BULAN_PANJANG[akhir.getMonth()]} ${akhir.getFullYear()} · total <b>${fmtRp(n * biaya)}</b>`;
+    const total = parseRp($("x-nominal").value), n = Number($("x-t-tenor").value);
+    const siap = total > 0 && Number.isInteger(n) && n >= 1;
+    $("x-wrap-biaya").hidden = !siap;
+    const biaya = parseRp($("x-t-biaya").value), y = Number($("x-t-thn").value), m = Number($("x-t-bln").value), h = Number($("x-t-hari").value);
+    if (!siap || !biaya || !y) { $("x-t-info").textContent = ""; return; }
+    const akhir = new Date(y, m + n - 1, 1), selisih = n * biaya - total;
+    $("x-t-info").innerHTML = `Tercatat di Kalender Tagihan: <b>${n} × ${fmtRp(biaya)}</b>${h ? `, tiap tanggal ${h}` : ""}<br>${BULAN_PANJANG[m]} ${y} sampai ${BULAN_PANJANG[akhir.getMonth()]} ${akhir.getFullYear()} · total bayar <b>${fmtRp(n * biaya)}</b>`
+      + (selisih ? `<br>${selisih > 0 ? "Lebih" : "Kurang"} ${fmtRp(Math.abs(selisih))} dari harga total${selisih > 0 ? " (misalnya bunga atau biaya admin)" : ""}.` : "");
   }
+  // Harga total dan tenor berubah: biaya per bulan dihitung ulang (harga ÷ tenor, dibulatkan ke atas)
   function autoBiaya() {
     const total = parseRp($("x-nominal").value), n = Number($("x-t-tenor").value);
-    if (xs.biayaManual || !total || !n) return;
-    $("x-t-biaya").value = Math.ceil(total / n).toLocaleString("id-ID");
+    if (total && Number.isInteger(n) && n >= 1) $("x-t-biaya").value = Math.ceil(total / n).toLocaleString("id-ID");
+    else $("x-t-biaya").value = "";
+    xs.biayaManual = false;
   }
   function renderTxForm() {
     const j = xs.jenis, io = j === "transfer" || j === "tarik";
@@ -300,14 +350,14 @@ export function createPockets({ db, S, $, esc, toast }) {
   $("fab").onclick = () => openTxSheet("keluar");
   $("sheet-close").onclick = closeSheet;
   $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
-  $("x-nominal").addEventListener("input", () => { fmtInput($("x-nominal")); autoBiaya(); infoTagihan(); });
+  $("x-nominal").addEventListener("input", () => { fmtInput($("x-nominal")); if (viaTagihan()) { autoBiaya(); infoTagihan(); } });
   $("x-via").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; xs.via = b.dataset.v; renderTxForm(); });
   $("x-t-tenor").addEventListener("input", () => { autoBiaya(); infoTagihan(); });
   $("x-t-biaya").addEventListener("input", () => { xs.biayaManual = true; fmtInput($("x-t-biaya")); infoTagihan(); });
   ["x-t-hari", "x-t-thn"].forEach((id) => $(id).addEventListener("input", infoTagihan));
   $("x-t-bln").addEventListener("change", infoTagihan);
   $("x-fee").addEventListener("input", () => fmtInput($("x-fee")));
-  document.querySelectorAll("#sheet .chip").forEach((b) => { b.onclick = () => { $("x-nominal").value = Number(b.dataset.v).toLocaleString("id-ID"); }; });
+  document.querySelectorAll("#sheet .chip").forEach((b) => { b.onclick = () => { $("x-nominal").value = Number(b.dataset.v).toLocaleString("id-ID"); if (viaTagihan()) { autoBiaya(); infoTagihan(); } }; });
   $("x-jenis").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; xs.jenis = b.dataset.j; xs.cat = null; renderTxForm(); });
   $("x-from").addEventListener("change", () => { if (xs.jenis === "transfer" || xs.jenis === "tarik") { $("x-to").value = ""; fillTo(); } });
   $("cats").addEventListener("click", (e) => {
@@ -319,18 +369,18 @@ export function createPockets({ db, S, $, esc, toast }) {
   // Belanja dengan paylater / cicilan: tidak memotong saldo sekarang, hanya membuat tagihan tenor di Kalender Tagihan
   function simpanTagihan() {
     const err = $("x-error"); err.textContent = "";
-    const nama = $("x-t-nama").value.trim().slice(0, 40), n = Number($("x-t-tenor").value), biaya = parseRp($("x-t-biaya").value);
+    const nama = $("x-t-nama").value.trim().slice(0, 40), n = Number($("x-t-tenor").value), biaya = parseRp($("x-t-biaya").value), total = parseRp($("x-nominal").value);
     const h = Number($("x-t-hari").value), y = Number($("x-t-thn").value), m = Number($("x-t-bln").value);
     if (!nama) { err.textContent = "Isi keterangan tagihannya dulu ya, misalnya Tiktok Paylater."; return; }
+    if (!total || total >= 1e10) { err.textContent = "Isi harga total belanjanya di kolom nominal atas dulu ya."; return; }
     if (!Number.isInteger(n) || n < 1 || n > 60) { err.textContent = "Tenor antara 1 sampai 60 bulan ya."; return; }
     if (!biaya || biaya >= 1e9) { err.textContent = "Isi biaya per bulannya dulu ya."; return; }
     if (!Number.isInteger(h) || h < 1 || h > 31) { err.textContent = "Tanggal jatuh tempo antara 1 sampai 31 ya."; return; }
     if (!Number.isInteger(y) || y < 2000 || y > 2100) { err.textContent = "Tahun cicilan pertama belum benar."; return; }
     if (S.bills && S.bills.some((b) => b.nama && b.nama.toLowerCase() === nama.toLowerCase() && b.tipe === "tenor" && !confirm(`Sudah ada tagihan tenor “${b.nama}”. Tetap tambahkan yang baru?`))) return;
-    const total = parseRp($("x-nominal").value);
     const ref = doc(collection(db, "users", uid(), "bills"));
     const data = { nama, nominal: biaya, tipe: "tenor", ikon: "💳", aktif: true, hari: h, mulai: `${y}-${String(m + 1).padStart(2, "0")}`, cicilan: Array(n).fill(biaya), paid: {}, createdAt: serverTimestamp() };
-    if (total) data.hargaTotal = total;
+    data.hargaTotal = total;
     setDoc(ref, data).catch((e) => { console.error(e); toast("Tagihan gagal tersimpan: " + (e.code || e.message)); });
     closeSheet();
     toast(`💳 ${nama}: ${n} × ${fmtRp(biaya)} masuk Kalender Tagihan`);

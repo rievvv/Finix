@@ -8,7 +8,7 @@ import {
   billStatus, tenorSchedule, catBudget, dailyTotal, countWeekdays, HARI_URUT, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
   cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES, splitSalary, gajiList, salaryDateInCycle,
 } from "./calc.js";
-import { exportExcel, exportPdf, namaBulan } from "./export.js";
+import { createReports } from "./laporan.js";
 
 const PALET = ["#FF7A00", "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EC4899", "#14B8A6", "#EF4444"];
 const IKON_TAGIHAN = ["🧾", "💡", "💧", "🌐", "📱", "🏠", "🚗", "💳", "🛡️", "📺", "🎓", "🏥"];
@@ -40,7 +40,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
       const maks = dateKey(new Date(parseKey(a).getFullYear(), parseKey(a).getMonth(), parseKey(a).getDate() + 365));
       return { startKey: a, endKey: b > maks ? maks : b };
     }
-    if (dash.period === "3") { const c2 = prevCycle(prevCycle(cur, tgl), tgl); return { startKey: c2.startKey, endKey: cur.endKey }; }
+    if (dash.period === "year") { let c2 = cur; for (let i = 0; i < 11; i++) c2 = prevCycle(c2, tgl); return { startKey: c2.startKey, endKey: cur.endKey }; } // 12 siklus gajian = setahun
     return { startKey: cur.startKey, endKey: cur.endKey };
   }
 
@@ -792,9 +792,15 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     closeBillSheet(); toast("Tagihan dihapus");
   };
 
-  /* ---------- Export Excel / PDF ---------- */
-  const exOpsi = () => {
-    const c = S.cycle, akhir = new Date(c.next.getFullYear(), c.next.getMonth(), c.next.getDate() - 1);
+  /* ---------- Export (Dashboard, Anggaran, Tagihan) ---------- */
+  const namaBulan = (y, m) => `${BULAN_PANJANG[m]} ${y}`;
+  const tglLengkap = (d) => d.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const akhirSiklus = (c) => new Date(c.next.getFullYear(), c.next.getMonth(), c.next.getDate() - 1);
+  const E = (S.exporters = S.exporters || {});
+
+  // Tagihan
+  const exOpsiTagihan = () => {
+    const c = S.cycle, akhir = akhirSiklus(c);
     return {
       bulan: { label: `Bulan ${namaBulan(cal.y, cal.m)}`, periode: namaBulan(cal.y, cal.m), occ: () => occurrencesInMonth(S.bills, cal.y, cal.m) },
       siklus: { label: `Siklus gaji berjalan (${fmtTgl(c.start)} – ${fmtTgl(akhir)})`, periode: `Siklus ${fmtTgl(c.start)} - ${fmtTgl(akhir)} ${akhir.getFullYear()}`, occ: () => occurrencesInRange(S.bills, c.start, c.next) },
@@ -805,34 +811,94 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
           .sort((a, b) => a.due - b.due || String(a.bill.nama).localeCompare(String(b.bill.nama))) },
     };
   };
-  $("bill-export").onclick = () => {
-    if (!ready()) return;
-    const cur = $("ex-scope").value || "bulan";
-    $("ex-scope").innerHTML = Object.entries(exOpsi()).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
-    $("ex-scope").value = cur;
-    $("ex-error").textContent = "";
-    $("export-sheet").hidden = false;
+  const JENIS_TAGIHAN = { bulanan: "Tiap bulan", sekali: "Sekali", tenor: "Tenor" };
+  E.Tagihan = {
+    scopes: () => Object.entries(exOpsiTagihan()).map(([k, v]) => ({ k, label: v.label })),
+    bangun: (k) => {
+      const o = exOpsiTagihan()[k] || exOpsiTagihan().bulan;
+      const occ = o.occ();
+      const baris = occ.map((x) => {
+        const info = x.bill.paid && x.bill.paid[paidKey(x.y, x.m)];
+        return { id: x.bill.id, nama: x.bill.nama || "Tagihan", jenis: JENIS_TAGIHAN[x.bill.tipe] || "Tiap bulan", nom: x.nom, lunas: x.paid,
+          r: [tglLengkap(x.due), x.bill.nama || "Tagihan", JENIS_TAGIHAN[x.bill.tipe] || "Tiap bulan", x.dari ? `${x.ke} / ${x.dari}` : "", x.nom, billStatus(x).label, info && info.at ? tglLengkap(parseKey(info.at)) : ""] };
+      });
+      const total = baris.reduce((a, r) => a + r.nom, 0), bayar = baris.filter((r) => r.lunas).reduce((a, r) => a + r.nom, 0);
+      const peta = new Map();
+      baris.forEach((r) => { const x = peta.get(r.id) || { nama: r.nama, jenis: r.jenis, n: 0, total: 0, bayar: 0 }; x.n++; x.total += r.nom; if (r.lunas) x.bayar += r.nom; peta.set(r.id, x); });
+      return {
+        periode: o.periode,
+        sheets: [
+          { nama: "Jadwal Tagihan",
+            kolom: [{ h: "Jatuh tempo", w: 13 }, { h: "Tagihan", w: 28 }, { h: "Jenis", w: 12 }, { h: "Cicilan ke", w: 11 }, { h: "Nominal", w: 16, t: "rp" }, { h: "Status", w: 14 }, { h: "Tanggal lunas", w: 14 }],
+            baris: baris.map((r) => r.r),
+            ringkas: [["Total", total], ["Sudah dibayar", bayar], ["Belum dibayar", total - bayar]] },
+          { nama: "Ringkasan",
+            kolom: [{ h: "Tagihan", w: 28 }, { h: "Jenis", w: 12 }, { h: "Jumlah", w: 9, t: "angka" }, { h: "Total", w: 16, t: "rp" }, { h: "Sudah dibayar", w: 18, t: "rp" }, { h: "Belum dibayar", w: 18, t: "rp" }],
+            baris: [...peta.values()].map((x) => [x.nama, x.jenis, x.n, x.total, x.bayar, x.total - x.bayar]) },
+        ],
+      };
+    },
   };
-  const closeExport = () => { $("export-sheet").hidden = true; };
-  $("ex-close").onclick = closeExport;
-  $("export-sheet").addEventListener("click", (e) => { if (e.target === $("export-sheet")) closeExport(); });
-  async function jalankanExport(fmt, btn) {
-    const o = exOpsi()[$("ex-scope").value], err = $("ex-error");
-    const occ = o.occ();
-    if (!occ.length) { err.textContent = "Tidak ada tagihan pada cakupan ini."; return; }
-    const lama = btn.textContent;
-    $("ex-xlsx").disabled = $("ex-pdf").disabled = true; btn.textContent = "Menyiapkan file…"; err.textContent = "";
-    try {
-      await (fmt === "xlsx" ? exportExcel : exportPdf)({ occ, periode: o.periode });
-      closeExport(); toast(fmt === "xlsx" ? "File Excel diunduh 📊" : "File PDF diunduh 📄");
-    } catch (e2) {
-      console.error(e2); err.textContent = e2.message || "Export gagal. Coba lagi ya.";
-    } finally {
-      $("ex-xlsx").disabled = $("ex-pdf").disabled = false; btn.textContent = lama;
-    }
-  }
-  $("ex-xlsx").onclick = () => jalankanExport("xlsx", $("ex-xlsx"));
-  $("ex-pdf").onclick = () => jalankanExport("pdf", $("ex-pdf"));
+
+  // Dashboard: mengikuti filter periode yang sedang dipilih
+  E.Dashboard = {
+    hint: () => { const { startKey, endKey } = dashRange(); return `Periode mengikuti filter di Dashboard: ${fmtTgl(parseKey(startKey))} – ${fmtTgl(parseKey(endKey))}.`; },
+    bangun: () => {
+      const { startKey, endKey } = dashRange();
+      const f = cashflow({ tx: S.txAll, startKey, endKey });
+      const a = analyze({ tx: S.txAll, categories: S.categories.concat([CAT_ADMIN]), envelopes: S.envelopes, startKey, endKey });
+      const rows = flowByCycle(S.txAll, S.profile.tanggalGajian, 6);
+      const todayKey = dateKey(today0());
+      return {
+        periode: `${tglLengkap(parseKey(startKey))} - ${tglLengkap(parseKey(endKey))}`,
+        sheets: [
+          { nama: "Ringkasan", kolom: [{ h: "Keterangan", w: 34 }, { h: "Nilai", w: 20, t: "rp" }],
+            baris: [["Pemasukan", f.inc], ["Pengeluaran", f.exp], ["Selisih (arus kas bersih)", f.net],
+              ["Tingkat tabungan", f.rate === null ? "-" : { v: f.rate, t: "pct" }],
+              ["Rata-rata pengeluaran per hari", a.avgPerDay],
+              ["Total saldo semua pocket", sumPockets()]] },
+          { nama: "Arus Harian", kolom: [{ h: "Tanggal", w: 14 }, { h: "Pemasukan", w: 16, t: "rp" }, { h: "Pengeluaran", w: 16, t: "rp" }, { h: "Selisih", w: 16, t: "rp" }],
+            baris: f.byDay.filter((d) => d.key <= todayKey).map((d) => [tglLengkap(d.date), d.masuk, d.keluar, d.masuk - d.keluar]),
+            ringkas: [["Total pemasukan", f.inc], ["Total pengeluaran", f.exp], ["Selisih", f.net]] },
+          { nama: "Per Kategori", kolom: [{ h: "Kategori", w: 26 }, { h: "Pengeluaran", w: 16, t: "rp" }, { h: "Porsi", w: 10, t: "pct" }],
+            baris: a.byCategory.map((c) => [c.nama, c.total, c.pct]) },
+          { nama: "Per Siklus", kolom: [{ h: "Siklus (mulai)", w: 18 }, { h: "Pemasukan", w: 16, t: "rp" }, { h: "Pengeluaran", w: 16, t: "rp" }],
+            baris: rows.map((r) => [r.label, r.masuk, r.keluar]) },
+        ],
+      };
+    },
+  };
+
+  // Anggaran: siklus gaji berjalan
+  E.Anggaran = {
+    bangun: () => {
+      const c = S.cycle, cd = S.cycleDoc || {};
+      const spent = {};
+      S.tx.filter((x) => x.jenis === "keluar").forEach((x) => { spent[x.categoryId] = (spent[x.categoryId] || 0) + x.nominal; });
+      const baris = [];
+      S.envelopes.forEach((e) => S.categories.filter((k) => k.envelopeId === e.id).forEach((k) => {
+        const b = catBudget(k, c), u = spent[k.id] || 0;
+        baris.push([e.nama, k.nama, k.mode === "harian" ? "Harian" : "Bulanan", b, u, b - u, b > 0 ? { v: (u / b) * 100, t: "pct" } : "-"]);
+      }));
+      const tb = baris.reduce((a, r) => a + r[3], 0), tu = baris.reduce((a, r) => a + r[4], 0);
+      const pos = S.envelopes.map((e) => {
+        const ks = S.categories.filter((k) => k.envelopeId === e.id);
+        return [e.nama, (cd.alokasi || {})[e.id] || 0, ks.reduce((a, k) => a + catBudget(k, c), 0), ks.reduce((a, k) => a + (spent[k.id] || 0), 0)];
+      });
+      const harian = S.categories.filter((k) => k.mode === "harian").map((k) => [
+        k.nama, HARI_URUT.filter(([v]) => (k.hariAktif || []).includes(v)).map(([, n]) => n).join(", "),
+        (k.rincian || []).map((r) => `${r.nama} ${fmtRp(r.nominal)}`).join("; "), dailyTotal(k), countWeekdays(c.start, c.next, k.hariAktif), catBudget(k, c)]);
+      const sheets = [
+        { nama: "Per Kategori", kolom: [{ h: "Pos", w: 20 }, { h: "Kategori", w: 20 }, { h: "Jenis", w: 10 }, { h: "Anggaran", w: 15, t: "rp" }, { h: "Terpakai", w: 15, t: "rp" }, { h: "Sisa", w: 15, t: "rp" }, { h: "Terpakai %", w: 11, t: "pct" }],
+          baris, ringkas: [["Total anggaran", tb], ["Total terpakai", tu], ["Total sisa", tb - tu]] },
+        { nama: "Per Pos", kolom: [{ h: "Pos", w: 22 }, { h: "Jatah siklus", w: 16, t: "rp" }, { h: "Anggaran kategori", w: 18, t: "rp" }, { h: "Terpakai", w: 16, t: "rp" }], baris: pos },
+      ];
+      if (harian.length) sheets.push({ nama: "Rincian Harian", kolom: [{ h: "Kategori", w: 18 }, { h: "Hari", w: 22 }, { h: "Rincian", w: 40 }, { h: "Per hari", w: 14, t: "rp" }, { h: "Jumlah hari", w: 11, t: "angka" }, { h: "Total siklus", w: 15, t: "rp" }], baris: harian });
+      return { periode: `Siklus ${tglLengkap(c.start)} - ${tglLengkap(akhirSiklus(c))}`, sheets };
+    },
+  };
+
+  createReports({ S, $, esc, toast });
 
   /* ================================================================
      Beranda: kartu tagihan terdekat + lencana di menu

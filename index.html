@@ -509,14 +509,17 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <h2 id="hi">Dashboard</h2>
       <div id="cycle-info" class="muted"></div>
     </div>
-    <button id="open-profile" class="avatar" type="button" aria-label="Buka profil">?</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="mini-btn" type="button" data-export="Dashboard" style="min-height:46px;padding:0 14px">⬇ Export</button>
+      <button id="open-profile" class="avatar" type="button" aria-label="Buka profil">?</button>
+    </div>
   </div>
   <div id="dash-hero" class="hero-grid"></div>
   <div class="row-h" style="margin-top:18px"><h3 class="section-title" style="margin:0">Arus keuangan</h3><span id="dash-range" class="muted"></span></div>
   <div id="dash-seg" class="seg">
     <button type="button" data-p="now" class="active">Siklus ini</button>
     <button type="button" data-p="prev">Siklus lalu</button>
-    <button type="button" data-p="3">3 siklus</button>
+    <button type="button" data-p="year">Tahunan</button>
     <button type="button" data-p="custom">📅 Tanggal</button>
   </div>
   <div id="dash-custom" hidden style="display:flex;gap:10px;margin-bottom:14px">
@@ -549,7 +552,10 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <h2>Pocket</h2>
       <div class="muted">Dana di Bank, E-Wallet, E-Money, Cash</div>
     </div>
-    <button id="pk-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Pocket</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="mini-btn" type="button" data-export="Pocket" style="min-height:46px;padding:0 14px">⬇ Export</button>
+      <button id="pk-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Pocket</button>
+    </div>
   </div>
   <div id="pk-total"></div>
   <div class="pk-actions">
@@ -569,7 +575,10 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <h2>Tabungan</h2>
       <div class="muted">Target menabung dan di pocket mana uangnya disimpan</div>
     </div>
-    <button id="sv-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Target</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="mini-btn" type="button" data-export="Tabungan" style="min-height:46px;padding:0 14px">⬇ Export</button>
+      <button id="sv-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Target</button>
+    </div>
   </div>
   <div id="sv-total"></div>
   <h3 class="section-title">Target tabunganmu</h3>
@@ -586,6 +595,7 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <h2>Transaksi</h2>
       <div class="muted">Semua pemasukan, pengeluaran, dan perpindahan dana</div>
     </div>
+    <button class="mini-btn" type="button" data-export="Transaksi" style="min-height:46px;padding:0 14px">⬇ Export</button>
   </div>
   <div id="tx-sum" class="kpis"></div>
   <div id="tx-jenis" class="seg seg5">
@@ -611,6 +621,7 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <h2>Anggaran</h2>
       <div class="muted">Perkiraan uang yang bisa kamu pakai</div>
     </div>
+    <button class="mini-btn" type="button" data-export="Anggaran" style="min-height:46px;padding:0 14px">⬇ Export</button>
   </div>
   <div class="cols">
     <div class="col">
@@ -655,7 +666,7 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <div class="muted">Biar tidak ada yang kelewat</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
-      <button id="bill-export" class="mini-btn" type="button" style="min-height:46px;padding:0 14px">⬇ Export</button>
+      <button class="mini-btn" type="button" data-export="Tagihan" style="min-height:46px;padding:0 14px">⬇ Export</button>
       <button id="bill-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Tambah</button>
     </div>
   </div>
@@ -841,14 +852,16 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
 
 <!-- ========== EXPORT TAGIHAN ========== -->
 <div id="export-sheet" class="sheet-wrap" hidden>
-  <div class="sheet" role="dialog" aria-label="Export tagihan">
-    <div class="sheet-head"><h3>Export tagihan</h3><button id="ex-close" class="link" type="button">Tutup</button></div>
-    <label>Cakupan data
+  <div class="sheet" role="dialog" aria-label="Export laporan">
+    <div class="sheet-head"><h3 id="ex-title">Export</h3><button id="ex-close" class="link" type="button">Tutup</button></div>
+    <label id="ex-wrap-scope">Cakupan data
       <select id="ex-scope" class="sel"></select>
     </label>
+    <p id="ex-hint" class="muted" style="margin:0 0 12px"></p>
     <p id="ex-error" class="error" role="alert"></p>
     <button id="ex-xlsx" class="btn primary" type="button">📊 Unduh Excel (.xlsx)</button>
     <button id="ex-pdf" class="btn ghost" type="button" style="margin-top:10px">📄 Unduh PDF</button>
+    <p class="muted" style="margin:12px 0 0;font-size:12px">Nama file: NAMA MENU-TANGGAL-JAM unduh</p>
   </div>
 </div>
 
@@ -875,10 +888,10 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     </div>
     <div id="x-catwrap"><div id="cats" class="cats"></div></div>
     <div id="x-wrap-tagihan" hidden>
-      <div class="muted" style="margin-bottom:10px">Belanja pakai paylater atau cicilan? Isi detailnya, tagihan tiap bulan otomatis masuk Kalender Tagihan. Nominal di atas = harga total (boleh dikosongi).</div>
+      <div class="muted" style="margin-bottom:10px">Belanja pakai paylater atau cicilan? Isi harga total di atas dan lama tenor, biaya per bulan muncul otomatis dan masih bisa kamu ubah. Tagihan tiap bulan masuk Kalender Tagihan.</div>
       <label>Keterangan tagihan<input id="x-t-nama" type="text" maxlength="40" placeholder="Contoh: Tiktok Paylater" autocomplete="off"></label>
       <label>Tenor (bulan)<input id="x-t-tenor" type="number" inputmode="numeric" min="1" max="60" placeholder="3"></label>
-      <label>Biaya per bulan (Rp)<input id="x-t-biaya" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
+      <label id="x-wrap-biaya" hidden>Biaya per bulan (Rp), bisa diubah<input id="x-t-biaya" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
       <label>Jatuh tempo tiap tanggal<input id="x-t-hari" type="number" inputmode="numeric" min="1" max="31"></label>
       <label>Cicilan pertama di bulan
         <div style="display:flex;gap:8px;margin-top:6px">

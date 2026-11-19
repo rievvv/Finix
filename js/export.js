@@ -1,6 +1,12 @@
-// export.js — Export daftar tagihan ke Excel (.xlsx) dan PDF.
+// export.js — Export laporan keuangan ke Excel (.xlsx) dan PDF. Dipakai semua menu lewat laporan.js.
 // Library (SheetJS, jsPDF) baru diunduh saat tombol export dipakai, jadi aplikasi tetap ringan.
-import { fmtRp, billStatus, paidKey, BULAN_PANJANG } from "./calc.js";
+//
+// Bentuk data yang diterima:
+//   { menu: "Tagihan", format: "xlsx" | "pdf", periode: "November 2026",
+//     sheets: [{ nama, kolom: [{ h: "Judul", w: 14, t: "teks" | "rp" | "angka" | "pct" }],
+//                baris: [[sel, sel, ...]],   // sel boleh berupa { v, t } untuk jenis khusus
+//                ringkas: [[label, nilai, t?]] }] }
+import { fmtRp } from "./calc.js";
 
 const LIB = {
   xlsx: "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
@@ -21,101 +27,114 @@ function muat(kunci) {
   return dimuat[kunci];
 }
 
-const JENIS = { bulanan: "Tiap bulan", sekali: "Sekali", tenor: "Tenor" };
-const tglLengkap = (d) => d.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" });
+const pad = (n) => String(n).padStart(2, "0");
 // Font bawaan PDF tidak punya emoji, jadi buang karakter di luar Latin
-const bersih = (t) => String(t).replace(/[^\x20-\x7E\u00A0-\u00FF]/g, "").replace(/\s+/g, " ").trim();
-const slug = (t) => bersih(t).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "tagihan";
+const bersih = (t) => String(t == null ? "" : t).replace(/[^\x20-\x7E\u00A0-\u00FF]/g, "").replace(/\s+/g, " ").trim();
+const tglJam = (d) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}.${pad(d.getMinutes())}`;
 
-function barisDari(occ) {
-  return occ.map((o) => {
-    const info = o.bill.paid && o.bill.paid[paidKey(o.y, o.m)];
-    return {
-      id: o.bill.id,
-      tgl: tglLengkap(o.due),
-      nama: bersih(o.bill.nama) || "Tagihan",
-      jenis: JENIS[o.bill.tipe] || JENIS.bulanan,
-      ke: o.dari ? `${o.ke} / ${o.dari}` : "",
-      nom: o.nom,
-      status: billStatus(o).label,
-      lunas: o.paid,
-      tglLunas: info && info.at ? tglLengkap(new Date(info.at + "T00:00:00")) : "",
-    };
-  });
+// Nama file: NAMA MENU-TANGGAL-JAM, contoh Tagihan-19-11-2026-14.35.xlsx
+export function namaFile(menu, ext, d = new Date()) {
+  return `${bersih(menu).replace(/\s+/g, "")}-${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}-${pad(d.getHours())}.${pad(d.getMinutes())}.${ext}`;
 }
 
-function ringkasPerTagihan(baris) {
-  const peta = new Map();
-  baris.forEach((r) => {
-    const x = peta.get(r.id) || { nama: r.nama, jenis: r.jenis, jumlah: 0, total: 0, terbayar: 0 };
-    x.jumlah++; x.total += r.nom; if (r.lunas) x.terbayar += r.nom;
-    peta.set(r.id, x);
-  });
-  return [...peta.values()];
+const sel = (c) => (c !== null && typeof c === "object" && "v" in c ? c : { v: c, t: null });
+const teksSel = (c, tipeKolom) => {
+  const { v, t } = sel(c), tipe = t || tipeKolom || "teks";
+  if (v === null || v === undefined || v === "") return "";
+  if (typeof v !== "number") return bersih(v);
+  if (tipe === "rp") return fmtRp(v);
+  if (tipe === "pct") return `${Math.round(v)}%`;
+  return String(v);
+};
+const namaSheet = (t, i) => (bersih(t).replace(/[\[\]:*?/\\]/g, "") || `Sheet${i + 1}`).slice(0, 31);
+
+export async function exportLaporan({ menu, format, periode, sheets }) {
+  const sekarang = new Date();
+  if (format === "xlsx") return excel({ menu, periode, sheets, sekarang });
+  return pdf({ menu, periode, sheets, sekarang });
 }
 
-export function namaBulan(y, m) { return `${BULAN_PANJANG[m]} ${y}`; }
-
-export async function exportExcel({ occ, periode }) {
+async function excel({ menu, periode, sheets, sekarang }) {
   await muat("xlsx");
-  const X = window.XLSX;
-  const baris = barisDari(occ);
-  const total = baris.reduce((a, r) => a + r.nom, 0);
-  const terbayar = baris.filter((r) => r.lunas).reduce((a, r) => a + r.nom, 0);
-
-  const kepala = ["No", "Jatuh tempo", "Nama tagihan", "Jenis", "Cicilan ke", "Nominal (Rp)", "Status", "Tanggal lunas"];
-  const aoa = [["Laporan Tagihan Finix"], [`Periode: ${periode}`], [], kepala,
-    ...baris.map((r, i) => [i + 1, r.tgl, r.nama, r.jenis, r.ke, r.nom, r.status, r.tglLunas]),
-    [], ["", "", "", "", "Total", total], ["", "", "", "", "Sudah dibayar", terbayar], ["", "", "", "", "Belum dibayar", total - terbayar]];
-  const ws = X.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 5 }, { wch: 13 }, { wch: 28 }, { wch: 12 }, { wch: 11 }, { wch: 16 }, { wch: 14 }, { wch: 14 }];
-  for (let r = 4; r < aoa.length; r++) {
-    const c = ws[X.utils.encode_cell({ r, c: 5 })];
-    if (c && typeof c.v === "number") c.z = "#,##0";
-  }
-
-  const ring = ringkasPerTagihan(baris);
-  const aoa2 = [["Tagihan", "Jenis", "Jumlah", "Total (Rp)", "Sudah dibayar (Rp)", "Belum dibayar (Rp)"],
-    ...ring.map((x) => [x.nama, x.jenis, x.jumlah, x.total, x.terbayar, x.total - x.terbayar])];
-  const ws2 = X.utils.aoa_to_sheet(aoa2);
-  ws2["!cols"] = [{ wch: 28 }, { wch: 12 }, { wch: 9 }, { wch: 16 }, { wch: 20 }, { wch: 20 }];
-  for (let r = 1; r < aoa2.length; r++) for (const c of [3, 4, 5]) { const cell = ws2[X.utils.encode_cell({ r, c })]; if (cell) cell.z = "#,##0"; }
-
-  const wb = X.utils.book_new();
-  X.utils.book_append_sheet(wb, ws, "Jadwal Tagihan");
-  X.utils.book_append_sheet(wb, ws2, "Ringkasan");
-  X.writeFile(wb, `tagihan-finix-${slug(periode)}.xlsx`);
+  const X = window.XLSX, wb = X.utils.book_new();
+  sheets.forEach((sh, si) => {
+    const kepala = [[`Laporan ${menu} Finix`], [periode ? `Periode: ${periode}` : ""], [`Diunduh: ${tglJam(sekarang)}`], []];
+    const aoa = [...kepala, sh.kolom.map((k) => bersih(k.h))];
+    const awalData = aoa.length;
+    sh.baris.forEach((r) => aoa.push(r.map((c, i) => {
+      const { v, t } = sel(c), tipe = t || sh.kolom[i].t || "teks";
+      if (typeof v === "number") return tipe === "pct" ? v / 100 : v;
+      return bersih(v);
+    })));
+    if (sh.ringkas && sh.ringkas.length) {
+      aoa.push([]);
+      sh.ringkas.forEach(([label, nilai, t]) => aoa.push([bersih(label), typeof nilai === "number" ? (t === "pct" ? nilai / 100 : nilai) : bersih(nilai)]));
+    }
+    const ws = X.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = sh.kolom.map((k) => ({ wch: k.w || 14 }));
+    sh.baris.forEach((r, ri) => r.forEach((c, ci) => {
+      const { v, t } = sel(c), tipe = t || sh.kolom[ci].t || "teks";
+      const cell = ws[X.utils.encode_cell({ r: awalData + ri, c: ci })];
+      if (cell && typeof v === "number") cell.z = tipe === "rp" ? "#,##0" : tipe === "pct" ? "0%" : "General";
+    }));
+    const awalRingkas = awalData + sh.baris.length + 1;
+    (sh.ringkas || []).forEach(([, nilai, t], i) => {
+      const cell = ws[X.utils.encode_cell({ r: awalRingkas + i, c: 1 })];
+      if (cell && typeof nilai === "number") cell.z = t === "pct" ? "0%" : t === "angka" ? "General" : "#,##0";
+    });
+    X.utils.book_append_sheet(wb, ws, namaSheet(sh.nama, si));
+  });
+  X.writeFile(wb, namaFile(menu, "xlsx", sekarang));
 }
 
-export async function exportPdf({ occ, periode }) {
+async function pdf({ menu, periode, sheets, sekarang }) {
   await muat("jspdf");
   await muat("autotable");
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const baris = barisDari(occ);
-  const total = baris.reduce((a, r) => a + r.nom, 0);
-  const terbayar = baris.filter((r) => r.lunas).reduce((a, r) => a + r.nom, 0);
-
+  const lebar = sheets.some((s) => s.kolom.length > 6);
+  const doc = new jsPDF({ unit: "pt", format: "a4", orientation: lebar ? "landscape" : "portrait" });
+  const mx = 40;
   doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(255, 122, 0);
-  doc.text("Laporan Tagihan Finix", 40, 50);
+  doc.text(`Laporan ${bersih(menu)} Finix`, mx, 50);
   doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(90, 70, 55);
-  doc.text(`Periode: ${periode}`, 40, 68);
-  doc.text(`Dicetak: ${tglLengkap(new Date())}`, 40, 83);
+  let y = 68;
+  if (periode) { doc.text(`Periode: ${bersih(periode)}`, mx, y); y += 15; }
+  doc.text(`Diunduh: ${tglJam(sekarang)}`, mx, y);
+  let startY = y + 17;
 
-  doc.autoTable({
-    startY: 100,
-    head: [["No", "Jatuh tempo", "Tagihan", "Jenis", "Cicilan", "Nominal", "Status"]],
-    body: baris.map((r, i) => [i + 1, r.tgl, r.nama, r.jenis, r.ke || "-", fmtRp(r.nom), r.status]),
-    foot: [[{ content: "Total", colSpan: 5, styles: { halign: "right" } }, { content: fmtRp(total), styles: { halign: "right" } }, ""],
-      [{ content: "Sudah dibayar", colSpan: 5, styles: { halign: "right" } }, { content: fmtRp(terbayar), styles: { halign: "right" } }, ""],
-      [{ content: "Belum dibayar", colSpan: 5, styles: { halign: "right" } }, { content: fmtRp(total - terbayar), styles: { halign: "right" } }, ""]],
-    showFoot: "lastPage",
-    styles: { fontSize: 9.5, cellPadding: 5 },
-    headStyles: { fillColor: [255, 122, 0], textColor: 255 },
-    footStyles: { fillColor: [255, 244, 232], textColor: [43, 27, 16] },
-    columnStyles: { 0: { cellWidth: 28 }, 5: { halign: "right" } },
-    alternateRowStyles: { fillColor: [255, 250, 244] },
-    margin: { left: 40, right: 40 },
+  sheets.forEach((sh) => {
+    if (startY > doc.internal.pageSize.getHeight() - 120) { doc.addPage(); startY = 50; }
+    if (sheets.length > 1) {
+      doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(43, 27, 16);
+      doc.text(bersih(sh.nama), mx, startY + 4);
+      startY += 12;
+    }
+    const kanan = {};
+    sh.kolom.forEach((k, i) => { if (k.t === "rp" || k.t === "pct" || k.t === "angka") kanan[i] = { halign: "right" }; });
+    doc.autoTable({
+      startY,
+      head: [sh.kolom.map((k) => bersih(k.h))],
+      body: sh.baris.map((r) => r.map((c, i) => teksSel(c, sh.kolom[i].t))),
+      styles: { fontSize: 9, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fillColor: [255, 122, 0], textColor: 255 },
+      alternateRowStyles: { fillColor: [255, 250, 244] },
+      columnStyles: kanan,
+      margin: { left: mx, right: mx },
+    });
+    startY = doc.lastAutoTable.finalY + 10;
+    if (sh.ringkas && sh.ringkas.length) {
+      doc.autoTable({
+        startY,
+        body: sh.ringkas.map(([label, nilai, t]) => [bersih(label), teksSel({ v: nilai, t: t || "rp" })]),
+        theme: "plain",
+        styles: { fontSize: 10, cellPadding: 3, fontStyle: "bold", textColor: [43, 27, 16] },
+        columnStyles: { 0: { cellWidth: 150 }, 1: { halign: "right", cellWidth: 130 } },
+        tableWidth: 280,
+        margin: { left: mx, right: mx },
+      });
+      startY = doc.lastAutoTable.finalY + 10;
+    }
+    startY += 14;
   });
-  doc.save(`tagihan-finix-${slug(periode)}.pdf`);
+  doc.save(namaFile(menu, "pdf", sekarang));
 }

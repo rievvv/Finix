@@ -1,9 +1,9 @@
 // sw.js — membuat Finix bisa dipasang di HP dan tetap terbuka saat sinyal jelek.
 // Hanya menyimpan file aplikasi. Data keuangan ditangani Firestore (cache offline-nya sendiri).
-const VERSI = "finix-v6";
+const VERSI = "finix-v7";
 const INTI = [
   "./", "./index.html", "./manifest.webmanifest",
-  "./js/app.js", "./js/calc.js", "./js/quotes.js", "./js/features.js", "./js/pockets.js", "./js/savings.js", "./js/export.js", "./js/firebase-config.js",
+  "./js/app.js", "./js/calc.js", "./js/quotes.js", "./js/features.js", "./js/pockets.js", "./js/savings.js", "./js/export.js", "./js/laporan.js", "./js/firebase-config.js",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png",
 ];
 
