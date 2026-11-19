@@ -646,7 +646,10 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
       <h2>Kalender Tagihan</h2>
       <div class="muted">Biar tidak ada yang kelewat</div>
     </div>
-    <button id="bill-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Tambah</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="bill-export" class="mini-btn" type="button" style="min-height:46px;padding:0 14px">⬇ Export</button>
+      <button id="bill-add" class="mini-btn brand" type="button" style="min-height:46px;padding:0 18px">+ Tambah</button>
+    </div>
   </div>
   <div id="bill-sum" class="kpis"></div>
   <div class="cols">
@@ -792,12 +795,13 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <label>Nama tagihan
       <input id="bf-nama" type="text" maxlength="40" placeholder="Contoh: Listrik PLN" autocomplete="off">
     </label>
-    <label>Nominal (Rp)
+    <label><span id="bf-nominal-lbl">Nominal (Rp)</span>
       <input id="bf-nominal" type="text" inputmode="numeric" placeholder="350.000" autocomplete="off">
     </label>
     <div id="bf-tipe" class="seg">
       <button type="button" data-t="bulanan">Tiap bulan</button>
       <button type="button" data-t="sekali">Sekali saja</button>
+      <button type="button" data-t="tenor">Tenor</button>
     </div>
     <label id="bf-wrap-hari">Jatuh tempo tiap tanggal
       <input id="bf-hari" type="number" inputmode="numeric" min="1" max="31">
@@ -805,11 +809,38 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <label id="bf-wrap-tgl" hidden>Tanggal jatuh tempo
       <input id="bf-tgl" type="date">
     </label>
+    <div id="bf-wrap-tenor" hidden>
+      <label>Cicilan pertama di bulan
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <select id="bf-mulai-bln" class="sel" style="margin-top:0;flex:2"></select>
+          <input id="bf-mulai-thn" type="number" inputmode="numeric" min="2000" max="2100" style="margin-top:0;flex:1">
+        </div>
+      </label>
+      <label>Lama tenor (bulan)
+        <input id="bf-jumlah" type="number" inputmode="numeric" min="1" max="60" placeholder="12">
+      </label>
+      <div class="muted" style="margin-bottom:6px;font-weight:600">Nominal tiap bulan</div>
+      <div id="bf-cic-list"></div>
+      <div id="bf-cic-total" class="muted" style="margin:2px 0 14px;font-weight:700"></div>
+    </div>
     <div class="muted" style="margin-bottom:6px;font-weight:600">Ikon</div>
     <div id="bf-ikon" class="cats"></div>
     <p id="bf-error" class="error" role="alert"></p>
     <button id="bf-save" class="btn primary" type="button">Simpan</button>
     <button id="bf-delete" class="btn ghost" type="button" style="margin-top:10px;color:var(--merah)" hidden>Hapus tagihan</button>
+  </div>
+</div>
+
+<!-- ========== EXPORT TAGIHAN ========== -->
+<div id="export-sheet" class="sheet-wrap" hidden>
+  <div class="sheet" role="dialog" aria-label="Export tagihan">
+    <div class="sheet-head"><h3>Export tagihan</h3><button id="ex-close" class="link" type="button">Tutup</button></div>
+    <label>Cakupan data
+      <select id="ex-scope" class="sel"></select>
+    </label>
+    <p id="ex-error" class="error" role="alert"></p>
+    <button id="ex-xlsx" class="btn primary" type="button">📊 Unduh Excel (.xlsx)</button>
+    <button id="ex-pdf" class="btn ghost" type="button" style="margin-top:10px">📄 Unduh PDF</button>
   </div>
 </div>
 

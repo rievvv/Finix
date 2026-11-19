@@ -287,15 +287,35 @@ export function occurrencesInMonth(bills, year, month) {
   const out = [];
   bills.forEach((b) => {
     if (b.aktif === false) return;
-    let due = null;
+    let due = null, nom = b.nominal || 0, ke = 0, dari = 0;
     if (b.tipe === 'sekali') {
       if (b.tanggalSekali) { const d = parseKey(b.tanggalSekali); if (d.getFullYear() === year && d.getMonth() === month) due = d; }
+    } else if (b.tipe === 'tenor') {
+      // Tenor: daftar nominal per bulan (cicilan[0] = bulan pertama, mulai dari bulan "mulai" = "YYYY-MM")
+      const list = Array.isArray(b.cicilan) ? b.cicilan : [];
+      const mm = /^(\d{4})-(\d{2})$/.exec(b.mulai || '');
+      if (mm && list.length && b.hari >= 1 && b.hari <= 31) {
+        const idx = (year - Number(mm[1])) * 12 + (month - (Number(mm[2]) - 1));
+        if (idx >= 0 && idx < list.length) { due = paydayIn(year, month, b.hari); nom = Number(list[idx]) || 0; ke = idx + 1; dari = list.length; }
+      }
     } else if (b.hari >= 1 && b.hari <= 31) {
       due = paydayIn(year, month, b.hari);
     }
-    if (due) out.push({ bill: b, due, key: dateKey(due), y: year, m: month, paid: !!(b.paid && b.paid[paidKey(year, month)]) });
+    if (due) out.push({ bill: b, due, key: dateKey(due), y: year, m: month, nom, ke, dari, paid: !!(b.paid && b.paid[paidKey(year, month)]) });
   });
   return out.sort((a, b) => a.due - b.due || String(a.bill.nama).localeCompare(String(b.bill.nama)));
+}
+
+// Jadwal tenor lengkap satu tagihan: [{ y, m, ke, dari, nom }]
+export function tenorSchedule(b) {
+  const mm = /^(\d{4})-(\d{2})$/.exec(b.mulai || '');
+  if (!mm || !Array.isArray(b.cicilan)) return [];
+  let y = Number(mm[1]), m = Number(mm[2]) - 1;
+  return b.cicilan.map((n, i) => {
+    const r = { y, m, ke: i + 1, dari: b.cicilan.length, nom: Number(n) || 0 };
+    m++; if (m > 11) { m = 0; y++; }
+    return r;
+  });
 }
 
 // Semua tagihan jatuh tempo pada [start, endExclusive)

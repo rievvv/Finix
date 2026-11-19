@@ -5,9 +5,10 @@ import {
 import {
   fmtRp, parseRp, dateKey, fmtTgl, computeGuard, prevCycle, analyze, compareWithPrevious, cycleTotals,
   avgSpendByCategory, suggestBudgets, planMoney, simulate, paidKey, occurrencesInMonth, occurrencesInRange,
-  billStatus, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
+  billStatus, tenorSchedule, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
   cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES, splitSalary, gajiList, salaryDateInCycle,
 } from "./calc.js";
+import { exportExcel, exportPdf, namaBulan } from "./export.js";
 
 const PALET = ["#FF7A00", "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EC4899", "#14B8A6", "#EF4444"];
 const IKON_TAGIHAN = ["🧾", "💡", "💧", "🌐", "📱", "🏠", "🚗", "💳", "🛡️", "📺", "🎓", "🏥"];
@@ -45,7 +46,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   function renderHero() {
     const g = guard(), c = S.cycle;
     const saldo = sumPockets();
-    const unpaid = unpaidInCycle().reduce((a, o) => a + o.bill.nominal, 0);
+    const unpaid = unpaidInCycle().reduce((a, o) => a + o.nom, 0);
     const f = forecastBalance({ saldo, tx: S.tx, cycle: c, unpaidBills: unpaid });
     const hs = S.hide.saldo, hg = S.hide.gajian;
     // Gaji yang tanggalnya sudah lewat di siklus ini tapi belum dicatat ke pocket
@@ -229,7 +230,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const cd = S.cycleDoc, c = S.cycle;
     const g = guard();
     const unpaid = unpaidInCycle();
-    const unpaidTotal = unpaid.reduce((a, o) => a + o.bill.nominal, 0);
+    const unpaidTotal = unpaid.reduce((a, o) => a + o.nom, 0);
     const plan = planMoney({ guard: g, cycleDoc: cd, envelopes: S.envelopes, unpaidTotal, cycle: c });
     lastPlan = plan; // dipakai simulator
 
@@ -487,8 +488,8 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     return `<div class="bill">
       <div class="ic">${esc(b.ikon || "🧾")}</div>
       <div class="tt" data-act="edit" data-id="${esc(b.id)}"><b>${esc(b.nama)}<span class="badge bg-${st.kode}">${esc(st.label)}</span></b>
-        <span>${esc(fmtTgl(o.due))} · ${b.tipe === "sekali" ? "sekali" : "tiap bulan"}</span></div>
-      <div class="bnom">${fmtRp(b.nominal)}</div>
+        <span>${esc(fmtTgl(o.due))} · ${b.tipe === "sekali" ? "sekali" : b.tipe === "tenor" ? `tenor ${o.ke}/${o.dari}` : "tiap bulan"}</span></div>
+      <div class="bnom">${fmtRp(o.nom)}</div>
       <button class="mini-btn ${o.paid ? "" : "ok"}" type="button" data-act="${o.paid ? "unpay" : "pay"}" data-id="${esc(b.id)}" data-y="${o.y}" data-m="${o.m}">${o.paid ? "↩ Batal" : "✔ Lunas"}</button>
     </div>`;
   }
@@ -502,7 +503,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
 
     // Ringkasan sebelum gajian
     const unpaid = unpaidInCycle();
-    const total = unpaid.reduce((a, o) => a + o.bill.nominal, 0);
+    const total = unpaid.reduce((a, o) => a + o.nom, 0);
     const next = unpaid.sort((a, b) => a.due - b.due)[0];
     $("bill-sum").innerHTML = `
       <div class="card kpi"><div class="k">Belum dibayar sebelum gajian</div><div class="v">${fmtRp(total)}</div><div class="d muted">${unpaid.length} tagihan</div></div>
@@ -523,7 +524,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     $("bill-day").innerHTML = selList.length ? selList.map(billRow).join("") : `<div class="empty">Tidak ada tagihan di tanggal ini.</div>`;
 
     $("bill-month-title").textContent = `Semua tagihan ${BULAN_PANJANG[cal.m]}`;
-    const monthTotal = occ.reduce((a, o) => a + o.bill.nominal, 0);
+    const monthTotal = occ.reduce((a, o) => a + o.nom, 0);
     $("bill-month-sub").textContent = occ.length ? `${occ.length} tagihan · total ${fmtRp(monthTotal)}` : "";
     $("bill-month").innerHTML = occ.length ? occ.map(billRow).join("")
       : `<div class="empty">${S.bills.length ? "Tidak ada tagihan bulan ini." : "Belum ada tagihan. Ketuk “Tambah tagihan” supaya tidak lupa bayar 🧾"}</div>`;
@@ -551,7 +552,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     return S.envelopes.find((e) => e.id === "cicilan") || S.envelopes.find((e) => e.tipe === "wajib" && !e.untukHarian) || null;
   }
 
-  function payBill(bill, y, m, pocketId) {
+  function payBill(bill, y, m, pocketId, nom) {
     const env = billEnvelope();
     if (!env) { toast("Pos untuk tagihan belum ada"); return; }
     const cat = S.categories.find((k) => k.envelopeId === env.id) || { id: "cicilan" };
@@ -559,12 +560,12 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const txRef = doc(collection(db, "users", uid, "transactions"));
     const batch = writeBatch(db);
     batch.set(txRef, {
-      jenis: "keluar", nominal: bill.nominal, pocketId, categoryId: cat.id, envelopeId: env.id, cycleId: S.cycle.id,
+      jenis: "keluar", nominal: nom, pocketId, categoryId: cat.id, envelopeId: env.id, cycleId: S.cycle.id,
       catatan: `Tagihan: ${bill.nama}`.slice(0, 60), tanggal: Timestamp.fromDate(now), hariKe: dateKey(now), tagihanId: bill.id,
     });
-    batch.update(doc(db, "users", uid, "cycles", S.cycle.id), { ["terpakai." + env.id]: increment(bill.nominal), totalTerpakai: increment(bill.nominal) });
-    if (S.pockets.some((p) => p.id === pocketId)) batch.update(doc(db, "users", uid, "pockets", pocketId), { saldo: increment(-bill.nominal) });
-    batch.update(doc(db, "users", uid, "bills", bill.id), { ["paid." + paidKey(y, m)]: { tx: txRef.id, cyc: S.cycle.id, nom: bill.nominal, at: dateKey(now), pk: pocketId } });
+    batch.update(doc(db, "users", uid, "cycles", S.cycle.id), { ["terpakai." + env.id]: increment(nom), totalTerpakai: increment(nom) });
+    if (S.pockets.some((p) => p.id === pocketId)) batch.update(doc(db, "users", uid, "pockets", pocketId), { saldo: increment(-nom) });
+    batch.update(doc(db, "users", uid, "bills", bill.id), { ["paid." + paidKey(y, m)]: { tx: txRef.id, cyc: S.cycle.id, nom, at: dateKey(now), pk: pocketId } });
     batch.set(doc(db, "directory", uid), { jumlahCatatan: increment(1), lastActive: serverTimestamp() }, { merge: true });
     batch.commit().catch((err) => { console.error(err); toast("Gagal menandai lunas. Coba lagi ya."); });
     toast(`${bill.ikon || "🧾"} ${bill.nama} lunas, tercatat di pos ${env.nama}`);
@@ -589,16 +590,24 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const el = e.target.closest("[data-act]"); if (!el) return;
     const bill = billById(el.dataset.id);
     if (el.dataset.act === "edit" && bill) openBillSheet(bill);
-    else if (el.dataset.act === "pay" && bill) S.pickPocket("Dibayar dari pocket mana?", (pid) => payBill(bill, Number(el.dataset.y), Number(el.dataset.m), pid));
+    else if (el.dataset.act === "pay" && bill) {
+      const y = Number(el.dataset.y), m = Number(el.dataset.m);
+      const occ = occurrencesInMonth([bill], y, m)[0];
+      const nom = occ ? occ.nom : bill.nominal;
+      S.pickPocket("Dibayar dari pocket mana?", (pid) => payBill(bill, y, m, pid, nom));
+    }
     else if (el.dataset.act === "unpay" && bill) unpayBill(bill, Number(el.dataset.y), Number(el.dataset.m));
   });
 
   /* ---------- Form tambah / ubah tagihan ---------- */
-  const bf = { id: null, tipe: "bulanan", ikon: "🧾" };
+  const bf = { id: null, tipe: "bulanan", ikon: "🧾", cic: [] };
   function renderBillForm() {
     $("bf-tipe").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.t === bf.tipe));
-    $("bf-wrap-hari").hidden = bf.tipe !== "bulanan";
+    $("bf-wrap-hari").hidden = bf.tipe === "sekali";
     $("bf-wrap-tgl").hidden = bf.tipe !== "sekali";
+    $("bf-wrap-tenor").hidden = bf.tipe !== "tenor";
+    $("bf-nominal-lbl").textContent = bf.tipe === "tenor" ? "Nominal awal (otomatis diisi ke semua bulan)" : "Nominal (Rp)";
+    if (bf.tipe === "tenor") renderCicilan();
     $("bf-ikon").querySelectorAll("button").forEach((b) => b.classList.toggle("sel", b.dataset.i === bf.ikon));
   }
   $("bf-ikon").innerHTML = IKON_TAGIHAN.map((i) => `<button type="button" class="cat" data-i="${i}" style="min-height:52px"><span style="font-size:22px">${i}</span></button>`).join("");
@@ -609,17 +618,54 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   });
   $("bf-ikon").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { bf.ikon = b.dataset.i; renderBillForm(); } });
   $("bf-tipe").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { bf.tipe = b.dataset.t; renderBillForm(); } });
-  $("bf-nominal").addEventListener("input", () => fmtInput($("bf-nominal")));
+  $("bf-nominal").addEventListener("input", () => {
+    const n = fmtInput($("bf-nominal"));
+    if (bf.tipe === "tenor") { bf.cic = bf.cic.map(() => n); renderCicilan(); }
+  });
+
+  /* Tenor: nominal tiap bulan bisa berbeda */
+  const mulaiBf = () => ({ m: Number($("bf-mulai-bln").value), y: Number($("bf-mulai-thn").value) });
+  function renderCicilan() {
+    const { m, y } = mulaiBf();
+    if (!Number.isInteger(y) || y < 2000 || y > 2100) { $("bf-cic-list").innerHTML = ""; return; }
+    let mm = m, yy = y;
+    $("bf-cic-list").innerHTML = bf.cic.map((n, i) => {
+      const lbl = `Bulan ${i + 1} · ${BULAN_PANJANG[mm]} ${yy}`;
+      mm++; if (mm > 11) { mm = 0; yy++; }
+      return `<label style="margin-bottom:8px"><span>${esc(lbl)}</span><input type="text" inputmode="numeric" data-i="${i}" placeholder="Rp 0" autocomplete="off" value="${n ? n.toLocaleString("id-ID") : ""}"></label>`;
+    }).join("");
+    $("bf-cic-total").textContent = bf.cic.length ? `Total ${bf.cic.length} bulan: ${fmtRp(bf.cic.reduce((a, n) => a + n, 0))}` : "";
+  }
+  $("bf-mulai-bln").innerHTML = BULAN_PANJANG.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+  $("bf-mulai-bln").addEventListener("change", renderCicilan);
+  $("bf-mulai-thn").addEventListener("change", renderCicilan);
+  $("bf-jumlah").addEventListener("input", () => {
+    const n = Number($("bf-jumlah").value);
+    if (!Number.isInteger(n) || n < 1 || n > 60) return;
+    const isi = parseRp($("bf-nominal").value);
+    bf.cic = Array.from({ length: n }, (_, i) => (i < bf.cic.length ? bf.cic[i] : (bf.cic[bf.cic.length - 1] || isi)));
+    renderCicilan();
+  });
+  $("bf-cic-list").addEventListener("input", (e) => {
+    const el = e.target.closest("input[data-i]"); if (!el) return;
+    bf.cic[Number(el.dataset.i)] = fmtInput(el);
+    $("bf-cic-total").textContent = `Total ${bf.cic.length} bulan: ${fmtRp(bf.cic.reduce((a, n) => a + n, 0))}`;
+  });
 
   function openBillSheet(bill) {
     bf.id = bill ? bill.id : null;
-    bf.tipe = bill ? (bill.tipe === "sekali" ? "sekali" : "bulanan") : "bulanan";
+    bf.tipe = bill ? (bill.tipe === "sekali" || bill.tipe === "tenor" ? bill.tipe : "bulanan") : "bulanan";
     bf.ikon = bill ? bill.ikon || "🧾" : "🧾";
     $("bf-title").textContent = bill ? "Ubah tagihan" : "Tambah tagihan";
     $("bf-nama").value = bill ? bill.nama : "";
     $("bf-nominal").value = bill ? bill.nominal.toLocaleString("id-ID") : "";
     $("bf-hari").value = bill && bill.hari ? bill.hari : (parseKey(cal.sel).getDate());
     $("bf-tgl").value = bill && bill.tanggalSekali ? bill.tanggalSekali : cal.sel;
+    const mm = bill && bill.tipe === "tenor" && /^(\d{4})-(\d{2})$/.exec(bill.mulai || "");
+    bf.cic = mm && Array.isArray(bill.cicilan) ? bill.cicilan.map((n) => Number(n) || 0) : Array(12).fill(0);
+    $("bf-mulai-bln").value = String(mm ? Number(mm[2]) - 1 : cal.m);
+    $("bf-mulai-thn").value = mm ? mm[1] : cal.y;
+    $("bf-jumlah").value = bf.cic.length;
     $("bf-preset").hidden = !!bill;
     $("bf-delete").hidden = !bill;
     $("bf-error").textContent = "";
@@ -637,9 +683,17 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const nominal = parseRp($("bf-nominal").value);
     const err = $("bf-error");
     if (!nama) { err.textContent = "Nama tagihannya diisi dulu ya."; return; }
-    if (!nominal || nominal >= 1e9) { err.textContent = "Isi nominal tagihannya dulu ya."; return; }
+    if (bf.tipe !== "tenor" && (!nominal || nominal >= 1e9)) { err.textContent = "Isi nominal tagihannya dulu ya."; return; }
     const data = { nama, nominal, tipe: bf.tipe, ikon: bf.ikon, aktif: true };
-    if (bf.tipe === "bulanan") {
+    if (bf.tipe === "tenor") {
+      const h = Number($("bf-hari").value), { m, y } = mulaiBf(), n = Number($("bf-jumlah").value);
+      if (!Number.isInteger(h) || h < 1 || h > 31) { err.textContent = "Tanggal jatuh tempo antara 1 sampai 31 ya."; return; }
+      if (!Number.isInteger(y) || y < 2000 || y > 2100) { err.textContent = "Tahun cicilan pertama belum benar."; return; }
+      if (!Number.isInteger(n) || n < 1 || n > 60 || n !== bf.cic.length) { err.textContent = "Lama tenor antara 1 sampai 60 bulan ya."; return; }
+      const kosong = bf.cic.findIndex((v) => !v || v >= 1e9);
+      if (kosong >= 0) { err.textContent = `Nominal bulan ke-${kosong + 1} belum diisi.`; return; }
+      data.hari = h; data.mulai = `${y}-${String(m + 1).padStart(2, "0")}`; data.cicilan = bf.cic.slice(); data.nominal = bf.cic[0];
+    } else if (bf.tipe === "bulanan") {
       const h = Number($("bf-hari").value);
       if (!Number.isInteger(h) || h < 1 || h > 31) { err.textContent = "Tanggal jatuh tempo antara 1 sampai 31 ya."; return; }
       data.hari = h;
@@ -654,6 +708,10 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     setDoc(ref, data, { merge: true }).catch((e2) => { console.error(e2); toast("Tagihan gagal tersimpan: " + (e2.code || e2.message)); });
     closeBillSheet();
     toast(bf.id ? "Tagihan diperbarui" : "Tagihan ditambahkan 🧾");
+    if (data.tipe === "tenor") {
+      const [ty, tm] = data.mulai.split("-").map(Number), last = new Date(ty, tm, 0).getDate();
+      cal.y = ty; cal.m = tm - 1; cal.sel = dateKey(new Date(ty, tm - 1, Math.min(data.hari, last)));
+    }
     if (data.tipe === "sekali") { const d = parseKey(data.tanggalSekali); cal.y = d.getFullYear(); cal.m = d.getMonth(); cal.sel = data.tanggalSekali; }
   };
 
@@ -662,6 +720,48 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     deleteDoc(doc(db, "users", S.user.uid, "bills", bf.id)).catch((e2) => { console.error(e2); toast("Gagal menghapus"); });
     closeBillSheet(); toast("Tagihan dihapus");
   };
+
+  /* ---------- Export Excel / PDF ---------- */
+  const exOpsi = () => {
+    const c = S.cycle, akhir = new Date(c.next.getFullYear(), c.next.getMonth(), c.next.getDate() - 1);
+    return {
+      bulan: { label: `Bulan ${namaBulan(cal.y, cal.m)}`, periode: namaBulan(cal.y, cal.m), occ: () => occurrencesInMonth(S.bills, cal.y, cal.m) },
+      siklus: { label: `Siklus gaji berjalan (${fmtTgl(c.start)} – ${fmtTgl(akhir)})`, periode: `Siklus ${fmtTgl(c.start)} - ${fmtTgl(akhir)} ${akhir.getFullYear()}`, occ: () => occurrencesInRange(S.bills, c.start, c.next) },
+      tahun: { label: `Satu tahun ${cal.y}`, periode: `Tahun ${cal.y}`, occ: () => occurrencesInRange(S.bills, new Date(cal.y, 0, 1), new Date(cal.y + 1, 0, 1)) },
+      tenor: { label: "Jadwal lengkap semua tagihan tenor", periode: "Jadwal tenor lengkap",
+        occ: () => S.bills.filter((b) => b.tipe === "tenor" && b.aktif !== false)
+          .flatMap((b) => tenorSchedule(b).map((r) => occurrencesInMonth([b], r.y, r.m)[0]).filter(Boolean))
+          .sort((a, b) => a.due - b.due || String(a.bill.nama).localeCompare(String(b.bill.nama))) },
+    };
+  };
+  $("bill-export").onclick = () => {
+    if (!ready()) return;
+    const cur = $("ex-scope").value || "bulan";
+    $("ex-scope").innerHTML = Object.entries(exOpsi()).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
+    $("ex-scope").value = cur;
+    $("ex-error").textContent = "";
+    $("export-sheet").hidden = false;
+  };
+  const closeExport = () => { $("export-sheet").hidden = true; };
+  $("ex-close").onclick = closeExport;
+  $("export-sheet").addEventListener("click", (e) => { if (e.target === $("export-sheet")) closeExport(); });
+  async function jalankanExport(fmt, btn) {
+    const o = exOpsi()[$("ex-scope").value], err = $("ex-error");
+    const occ = o.occ();
+    if (!occ.length) { err.textContent = "Tidak ada tagihan pada cakupan ini."; return; }
+    const lama = btn.textContent;
+    $("ex-xlsx").disabled = $("ex-pdf").disabled = true; btn.textContent = "Menyiapkan file…"; err.textContent = "";
+    try {
+      await (fmt === "xlsx" ? exportExcel : exportPdf)({ occ, periode: o.periode });
+      closeExport(); toast(fmt === "xlsx" ? "File Excel diunduh 📊" : "File PDF diunduh 📄");
+    } catch (e2) {
+      console.error(e2); err.textContent = e2.message || "Export gagal. Coba lagi ya.";
+    } finally {
+      $("ex-xlsx").disabled = $("ex-pdf").disabled = false; btn.textContent = lama;
+    }
+  }
+  $("ex-xlsx").onclick = () => jalankanExport("xlsx", $("ex-xlsx"));
+  $("ex-pdf").onclick = () => jalankanExport("pdf", $("ex-pdf"));
 
   /* ================================================================
      Beranda: kartu tagihan terdekat + lencana di menu
@@ -681,7 +781,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
         const st = billStatus(o);
         return `<div class="tx"><div class="ic">${esc(o.bill.ikon || "🧾")}</div>
           <div class="tt"><b>${esc(o.bill.nama)}</b><span>${esc(fmtTgl(o.due))} · <span class="badge bg-${st.kode}" style="margin-left:0">${esc(st.label)}</span></span></div>
-          <div class="nom">${fmtRp(o.bill.nominal)}</div></div>`;
+          <div class="nom">${fmtRp(o.nom)}</div></div>`;
       }).join("");
     }
     // Lencana merah: ada tagihan telat atau jatuh tempo ≤ 3 hari

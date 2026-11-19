@@ -1,9 +1,9 @@
 // sw.js — membuat Finix bisa dipasang di HP dan tetap terbuka saat sinyal jelek.
 // Hanya menyimpan file aplikasi. Data keuangan ditangani Firestore (cache offline-nya sendiri).
-const VERSI = "finix-v5";
+const VERSI = "finix-v6";
 const INTI = [
   "./", "./index.html", "./manifest.webmanifest",
-  "./js/app.js", "./js/calc.js", "./js/quotes.js", "./js/features.js", "./js/pockets.js", "./js/savings.js", "./js/firebase-config.js",
+  "./js/app.js", "./js/calc.js", "./js/quotes.js", "./js/features.js", "./js/pockets.js", "./js/savings.js", "./js/export.js", "./js/firebase-config.js",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png",
 ];
 
@@ -24,7 +24,7 @@ self.addEventListener("fetch", (e) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   const mesinSendiri = url.origin === self.location.origin;
-  const asetStatis = url.hostname === "www.gstatic.com" || url.hostname === "fonts.gstatic.com" || url.hostname === "fonts.googleapis.com";
+  const asetStatis = url.hostname === "www.gstatic.com" || url.hostname === "fonts.gstatic.com" || url.hostname === "fonts.googleapis.com" || url.hostname === "cdnjs.cloudflare.com";
   // Login Google, Firestore, dsb. tidak diutak-atik
   if (!mesinSendiri && !asetStatis) return;
 
