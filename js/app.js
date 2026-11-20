@@ -19,6 +19,7 @@ import { createFeatures } from "./features.js";
 import { createPockets } from "./pockets.js";
 import { createSavings } from "./savings.js";
 import { QUOTES } from "./quotes.js";
+import { initBackNav } from "./nav.js";
 
 /* Username admin (tanpa "@") dipetakan ke email ini di Firebase Authentication.
    Password TIDAK disimpan di kode — akun admin dibuat manual di Firebase Console. */
@@ -43,8 +44,11 @@ const SCREENS = ["auth", "onboard", "dashboard", "pockets", "savings", "tx", "bu
 const MENU = ["dashboard", "pockets", "savings", "tx", "budget", "bills", "profile"]; // layar yang memakai menu utama
 const BISA_CATAT = ["dashboard", "pockets", "savings", "tx", "budget", "bills"];
 let currentScreen = "auth";
+// Tombol / gestur kembali di HP menutup pop-up atau kembali ke layar sebelumnya, tidak langsung keluar aplikasi
+const nav = initBackNav({ getScreen: () => currentScreen, goTo: (n) => navigate(n), toast: (m) => toast(m) });
 function show(name) {
   currentScreen = name;
+  nav.catat(name);
   SCREENS.forEach((n) => { $("screen-" + n).hidden = n !== name; });
   document.body.classList.toggle("has-nav", MENU.includes(name));
   $("nav").hidden = !MENU.includes(name);

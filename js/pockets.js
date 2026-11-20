@@ -4,7 +4,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   fmtRp, parseRp, dateKey, fmtTgl, parseKey, prevCycle, splitSalary, savedByPocket,
-  POCKET_TYPES, POCKET_PRESETS, DEFAULT_POCKETS, INCOME_CATEGORIES, CAT_ADMIN, HARI_PANJANG, BULAN_PANJANG,
+  POCKET_TYPES, POCKET_PRESETS, DEFAULT_POCKETS, INCOME_CATEGORIES, CAT_ADMIN, HARI_PANJANG, BULAN_PANJANG, IKON_UMUM, getCycle,
 } from "./calc.js";
 
 export function createPockets({ db, S, $, esc, toast }) {
@@ -53,7 +53,7 @@ export function createPockets({ db, S, $, esc, toast }) {
       sub = `${t.jenis === "masuk" ? "ke" : "dari"} ${pkLabel(t.pocketId)}`;
       nom = (t.jenis === "masuk" ? "+" : "−") + fmtRp(t.nominal); cls = t.jenis === "masuk" ? "n-in" : "n-out";
     }
-    return `<div class="tx"><div class="ic">${esc(ic)}</div>
+    return `<div class="tx" data-tx="${esc(t.id)}"><div class="ic">${esc(ic)}</div>
       <div class="tt"><b>${esc(title)}</b><span>${esc(sub)}${t.catatan ? " · " + esc(t.catatan) : ""}${!withDel && when ? " · " + esc(when) : ""}</span></div>
       <div class="nom ${cls}">${esc(nom)}</div>
       ${withDel ? `<button class="del-btn" type="button" data-del="${esc(t.id)}" aria-label="Hapus catatan">🗑</button>` : ""}</div>`;
@@ -250,10 +250,8 @@ export function createPockets({ db, S, $, esc, toast }) {
     batch.delete(doc(db, "users", u, "transactions", t.id));
     batch.set(doc(db, "directory", u), { jumlahCatatan: increment(-1) }, { merge: true });
   }
-  $("screen-tx").addEventListener("click", (e) => {
-    const d = e.target.closest("[data-del]"); if (!d) return;
-    const t = S.txAll.find((x) => x.id === d.dataset.del); if (!t) return;
-    if (!confirm("Hapus catatan ini? Saldo pocket dan anggaran akan dikembalikan.")) return;
+  function hapusTx(t) {
+    if (!confirm("Hapus catatan ini? Saldo pocket dan anggaran akan dikembalikan.")) return false;
     const batch = writeBatch(db);
     reverse(batch, t);
     S.txAll.filter((x) => x.terkait === t.id).forEach((f) => reverse(batch, f)); // biaya admin ikut terhapus
@@ -264,12 +262,61 @@ export function createPockets({ db, S, $, esc, toast }) {
     }
     batch.commit().catch((err) => { console.error(err); toast("Gagal menghapus. Coba lagi ya."); });
     toast("Catatan dihapus");
+    return true;
+  }
+  $("screen-tx").addEventListener("click", (e) => {
+    const d = e.target.closest("[data-del]"); if (!d) return;
+    const t = S.txAll.find((x) => x.id === d.dataset.del); if (t) hapusTx(t);
+  });
+
+  /* ---------- Rincian transaksi (ketuk baris mana pun) ---------- */
+  let detailTx = null;
+  const closeDetail = () => { $("txd-sheet").hidden = true; detailTx = null; };
+  function openDetail(id) {
+    const t = S.txAll.find((x) => x.id === id) || S.tx.find((x) => x.id === id); if (!t) return;
+    detailTx = t;
+    const d = t.tanggal && t.tanggal.toDate ? t.tanggal.toDate() : parseKey(t.hariKe);
+    const jam = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }).replace(":", ".");
+    const io = t.jenis === "transfer" || t.jenis === "tarik";
+    const fee = S.txAll.find((x) => x.terkait === t.id);
+    const env = t.envelopeId ? S.envelopes.find((e) => e.id === t.envelopeId) : null;
+    const bill = t.tagihanId ? S.bills.find((b) => b.id === t.tagihanId) : null;
+    const c = io ? { ikon: t.jenis === "tarik" ? "🏧" : "🔁", nama: t.jenis === "tarik" ? "Tarik tunai" : "Transfer" } : catOf(t);
+    const bebas = t.jenis === "keluar" && (S.categories.find((k) => k.id === t.categoryId) || {}).bebas;
+    const rows = [
+      ["Jenis", JENIS_TX[t.jenis] || t.jenis],
+      ["Tanggal", `${HARI_PANJANG[d.getDay()]}, ${fmtTgl(d)} · ${jam}`],
+      io ? null : ["Kategori", `${c.ikon} ${c.nama}${bebas ? " (di luar anggaran)" : ""}`],
+      env && t.jenis === "keluar" && !bebas ? ["Pos anggaran", `${env.ikon || ""} ${env.nama}`] : null,
+      [io ? "Dari pocket" : t.jenis === "masuk" ? "Diterima di" : "Dibayar dari", pkLabel(t.pocketId)],
+      io ? ["Ke pocket", pkLabel(t.pocketTujuanId)] : null,
+      fee ? ["Biaya admin", fmtRp(fee.nominal)] : null,
+      t.alok ? ["Jatah anggaran", "Ikut ditambahkan ke jatah siklus"] : null,
+      bill ? ["Tagihan", bill.nama] : null,
+      ["Catatan", t.catatan || "-"],
+    ].filter(Boolean);
+    $("txd-body").innerHTML = `<div class="txd-top"><div class="ic">${esc(c.ikon)}</div><div class="big ${t.jenis === "masuk" ? "n-in" : t.jenis === "keluar" ? "n-out" : ""}">${t.jenis === "masuk" ? "+" : t.jenis === "keluar" ? "−" : ""}${esc(fmtRp(t.nominal))}</div></div>`
+      + rows.map(([k, v]) => `<div class="txd-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
+    const kunci = t.terkait ? "Ini biaya admin dari sebuah transfer atau tarik tunai. Ubah lewat transaksi induknya." : t.tagihanId ? "Transaksi ini dari pelunasan tagihan. Untuk mengubahnya, batalkan pelunasan di menu Tagihan." : "";
+    $("txd-note").textContent = kunci; $("txd-note").hidden = !kunci;
+    $("txd-edit").hidden = !!kunci;
+    $("txd-sheet").hidden = false;
+  }
+  $("txd-close").onclick = closeDetail;
+  $("txd-sheet").addEventListener("click", (e) => { if (e.target === $("txd-sheet")) closeDetail(); });
+  $("txd-del").onclick = () => { if (detailTx && hapusTx(detailTx)) closeDetail(); };
+  $("txd-edit").onclick = () => { const t = detailTx; closeDetail(); if (t) openEditTx(t); };
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("[data-del]")) return;
+    const r = e.target.closest(".tx[data-tx]"); if (r) openDetail(r.dataset.tx);
   });
 
   /* ================================================================
      FORM CATAT TRANSAKSI
      ================================================================ */
-  const xs = { jenis: "keluar", cat: null, via: "pocket", biayaManual: false };
+  const xs = { jenis: "keluar", cat: null, via: "pocket", biayaManual: false, edit: null };
+  const kb = { ikon: "🗑️" };
+  const PRESET_BEBAS = [["Bayar sampah", "🗑️"], ["Parkir", "🅿️"], ["Tol", "🛣️"], ["Sedekah", "🤲"], ["Iuran RT", "🏘️"], ["Servis", "🔧"]];
   const fillSelect = (el, list, selected) => {
     el.innerHTML = list.map((p) => `<option value="${esc(p.id)}">${esc(pkIcon(p) + " " + p.nama)} · ${esc(S.mask(fmtRp(p.saldo || 0)))}</option>`).join("");
     if (selected && list.some((p) => p.id === selected)) el.value = selected;
@@ -311,19 +358,24 @@ export function createPockets({ db, S, $, esc, toast }) {
     const j = xs.jenis, io = j === "transfer" || j === "tarik";
     if (j !== "keluar") xs.via = "pocket";
     const vt = viaTagihan();
-    $("x-via").hidden = j !== "keluar";
+    $("x-via").hidden = j !== "keluar" || !!xs.edit;
+    $("x-jenis").hidden = !!xs.edit;
+    $("x-title").textContent = xs.edit ? "Ubah transaksi" : "Catat transaksi";
     document.querySelectorAll("#x-via button").forEach((b) => b.classList.toggle("active", b.dataset.v === xs.via));
     $("x-wrap-tagihan").hidden = !vt; $("x-wrap-from").hidden = vt; $("x-wrap-date").hidden = vt; $("x-note").hidden = vt;
-    $("x-save").textContent = vt ? "Simpan ke Kalender Tagihan" : "Catat";
+    $("x-save").textContent = vt ? "Simpan ke Kalender Tagihan" : xs.edit ? "Simpan perubahan" : "Catat";
     if (vt) { $("x-catwrap").hidden = true; infoTagihan(); return; }
     document.querySelectorAll("#x-jenis button").forEach((b) => b.classList.toggle("active", b.dataset.j === j));
     $("x-catwrap").hidden = io;
     $("x-wrap-to").hidden = !io; $("x-wrap-fee").hidden = !io; $("x-wrap-alok").hidden = j !== "masuk";
     $("x-from-lbl").textContent = { keluar: "Dibayar dari pocket", masuk: "Diterima di pocket", transfer: "Dari pocket", tarik: "Tarik dari pocket" }[j];
     $("x-to-lbl").textContent = j === "tarik" ? "Uang tunai masuk ke pocket" : "Ke pocket";
+    $("x-bebas-wrap").hidden = j !== "keluar";
     if (!io) {
-      const list = j === "keluar" ? S.categories : INCOME_CATEGORIES;
-      $("cats").innerHTML = list.map((c) => `<button class="cat${c.id === xs.cat ? " sel" : ""}" type="button" data-id="${esc(c.id)}"><span>${esc(c.ikon)}</span>${esc(c.nama)}</button>`).join("");
+      const btn = (c) => `<button class="cat${c.id === xs.cat ? " sel" : ""}" type="button" data-id="${esc(c.id)}"><span>${esc(c.ikon)}</span>${esc(c.nama)}</button>`;
+      const list = j === "keluar" ? S.categories.filter((c) => !c.bebas) : INCOME_CATEGORIES;
+      $("cats").innerHTML = list.map(btn).join("");
+      if (j === "keluar") $("cats-bebas").innerHTML = S.categories.filter((c) => c.bebas).map(btn).join("") + `<button class="cat add" type="button" data-add="1"><span>＋</span>Kategori bebas</button>`;
     }
     const from = defaultFrom(j);
     fillSelect($("x-from"), S.pockets, from);
@@ -333,6 +385,7 @@ export function createPockets({ db, S, $, esc, toast }) {
   }
   function openTxSheet(jenis = "keluar", preset = {}) {
     if (!S.pockets.length) { toast("Buat pocket dulu di menu Pocket ya"); return; }
+    xs.edit = null; $("kb-form").hidden = true;
     xs.jenis = jenis; xs.cat = preset.cat || null; xs.gajiId = preset.gajiId || null; xs.via = "pocket"; xs.biayaManual = false;
     const sk = new Date(), nb = new Date(sk.getFullYear(), sk.getMonth() + 1, 1);
     $("x-t-nama").value = ""; $("x-t-tenor").value = ""; $("x-t-biaya").value = ""; $("x-t-hari").value = sk.getDate();
@@ -346,7 +399,7 @@ export function createPockets({ db, S, $, esc, toast }) {
     $("sheet").hidden = false;
     setTimeout(() => $("x-nominal").focus(), 50);
   }
-  const closeSheet = () => { $("sheet").hidden = true; };
+  const closeSheet = () => { $("sheet").hidden = true; $("kb-form").hidden = true; };
   $("fab").onclick = () => openTxSheet("keluar");
   $("sheet-close").onclick = closeSheet;
   $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
@@ -360,11 +413,50 @@ export function createPockets({ db, S, $, esc, toast }) {
   document.querySelectorAll("#sheet .chip").forEach((b) => { b.onclick = () => { $("x-nominal").value = Number(b.dataset.v).toLocaleString("id-ID"); if (viaTagihan()) { autoBiaya(); infoTagihan(); } }; });
   $("x-jenis").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; xs.jenis = b.dataset.j; xs.cat = null; renderTxForm(); });
   $("x-from").addEventListener("change", () => { if (xs.jenis === "transfer" || xs.jenis === "tarik") { $("x-to").value = ""; fillTo(); } });
-  $("cats").addEventListener("click", (e) => {
+  $("x-catwrap").addEventListener("click", (e) => {
     const b = e.target.closest(".cat"); if (!b) return;
+    if (b.dataset.add) { bukaKb(); return; }
     xs.cat = b.dataset.id;
-    document.querySelectorAll("#cats .cat").forEach((x) => x.classList.toggle("sel", x === b));
+    document.querySelectorAll("#x-catwrap .cat").forEach((x) => x.classList.toggle("sel", x === b));
   });
+
+  /* ---------- Kategori bebas: pengeluaran di luar anggaran, tetap dihitung ke batas harian ---------- */
+  const renderKbIkon = () => $("kb-ikon").querySelectorAll("button").forEach((b) => b.classList.toggle("sel", b.dataset.i === kb.ikon));
+  $("kb-ikon").innerHTML = IKON_UMUM.map((i) => `<button type="button" class="cat" data-i="${i}" style="min-height:52px"><span style="font-size:22px">${i}</span></button>`).join("");
+  $("kb-preset").innerHTML = PRESET_BEBAS.map(([n, i]) => `<button type="button" class="chip" data-n="${esc(n)}" data-i="${i}">${i} ${esc(n)}</button>`).join("");
+  $("kb-ikon").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { kb.ikon = b.dataset.i; renderKbIkon(); } });
+  $("kb-preset").addEventListener("click", (e) => { const b = e.target.closest(".chip"); if (!b) return; $("kb-nama").value = b.dataset.n; kb.ikon = b.dataset.i; renderKbIkon(); });
+  function bukaKb() { $("kb-nama").value = ""; kb.ikon = "🗑️"; renderKbIkon(); $("kb-form").hidden = false; $("kb-nama").focus(); }
+  $("kb-batal").onclick = () => { $("kb-form").hidden = true; };
+  $("kb-save").onclick = () => {
+    const nama = $("kb-nama").value.trim().slice(0, 24), err = $("x-error");
+    const env = harianEnv();
+    if (!nama) { err.textContent = "Nama kategori bebasnya diisi dulu ya."; return; }
+    if (!env) { err.textContent = "Belum ada pos anggaran. Buat dulu di menu Anggaran."; return; }
+    if (S.categories.some((k) => k.nama.toLowerCase() === nama.toLowerCase())) { err.textContent = "Nama kategori ini sudah ada."; return; }
+    err.textContent = "";
+    const id = doc(collection(db, "users", uid(), "categories")).id;
+    const data = { id, nama, ikon: kb.ikon, envelopeId: env, anggaran: 0, mode: "bulanan", bebas: true, urutan: Math.max(-1, ...S.categories.map((k) => k.urutan ?? 0)) + 1 };
+    S.categories.push(data);
+    setDoc(doc(db, "users", uid(), "categories", id), data).catch((e2) => { console.error(e2); toast("Kategori gagal tersimpan: " + (e2.code || e2.message)); });
+    xs.cat = id; $("kb-form").hidden = true; renderTxForm();
+  };
+
+  /* ---------- Ubah transaksi: memakai form catat yang sama ---------- */
+  function openEditTx(t) {
+    xs.edit = t; xs.jenis = t.jenis; xs.cat = t.categoryId || null; xs.gajiId = t.gajiId || null; xs.via = "pocket";
+    $("kb-form").hidden = true;
+    const fee = S.txAll.find((x) => x.terkait === t.id);
+    $("x-nominal").value = t.nominal.toLocaleString("id-ID");
+    $("x-note").value = t.catatan || ""; $("x-fee").value = fee ? fee.nominal.toLocaleString("id-ID") : "";
+    $("x-alok").checked = !!t.alok; $("x-error").textContent = "";
+    const cyc = getCycle(S.profile.tanggalGajian, parseKey(t.hariKe)), hariIni = dateKey(today0());
+    $("x-date").min = cyc.startKey; $("x-date").max = cyc.endKey < hariIni ? cyc.endKey : hariIni; $("x-date").value = t.hariKe;
+    renderTxForm();
+    if (pk(t.pocketId)) $("x-from").value = t.pocketId;
+    if (t.jenis === "transfer" || t.jenis === "tarik") { $("x-to").value = ""; fillTo(); if (pk(t.pocketTujuanId)) $("x-to").value = t.pocketTujuanId; }
+    $("sheet").hidden = false;
+  }
 
   // Belanja dengan paylater / cicilan: tidak memotong saldo sekarang, hanya membuat tagihan tenor di Kalender Tagihan
   function simpanTagihan() {
@@ -398,19 +490,27 @@ export function createPockets({ db, S, $, esc, toast }) {
     if (nominal >= 1e9 || fee >= 1e9) { err.textContent = "Nominalnya terlalu besar."; return; }
     if (!pk(from)) { err.textContent = "Pilih pocketnya dulu ya."; return; }
     if (io && (!to || !pk(to) || to === from)) { err.textContent = "Pilih pocket tujuan yang berbeda dari pocket asal."; return; }
-    if (!io && !xs.cat) { err.textContent = "Pilih kategorinya dulu ya."; return; }
-    if (!dk || dk < S.cycle.startKey || dk > dateKey(today0())) { err.textContent = `Tanggal harus di siklus ini (${fmtTgl(S.cycle.start)} sampai hari ini).`; return; }
+    if (!io && (!xs.cat || (j === "keluar" && !S.categories.some((c) => c.id === xs.cat)))) { err.textContent = "Pilih kategorinya dulu ya."; return; }
+    const dMin = $("x-date").min, dMax = $("x-date").max;
+    if (!dk || dk < dMin || dk > dMax) { err.textContent = `Tanggal harus antara ${fmtTgl(parseKey(dMin))} dan ${fmtTgl(parseKey(dMax))}.`; return; }
+    const edit = xs.edit, feeLama = edit ? S.txAll.filter((x) => x.terkait === edit.id) : [];
     const keluarDariPocket = j === "masuk" ? 0 : nominal + fee;
-    const bal = (pk(from).saldo || 0);
+    // saat mengubah, nominal lama yang keluar dari pocket yang sama dikembalikan dulu
+    const kembali = edit && edit.pocketId === from && edit.jenis !== "masuk" ? edit.nominal + feeLama.reduce((a, f) => a + f.nominal, 0) : 0;
+    const bal = (pk(from).saldo || 0) + kembali;
     if (keluarDariPocket && bal < keluarDariPocket && !confirm(`Saldo ${pk(from).nama} (${fmtRp(bal)}) kurang dari ${fmtRp(keluarDariPocket)}. Tetap dicatat?`)) return;
 
     const u = uid(), now = new Date(), isToday = dk === dateKey(today0());
     const when = isToday ? now : (() => { const d = parseKey(dk); d.setHours(12); return d; })();
     const catatan = $("x-note").value.trim().slice(0, 60);
     const batch = writeBatch(db);
-    const ref = doc(collection(db, "users", u, "transactions"));
-    const base = { jenis: j, nominal, pocketId: from, cycleId: S.cycle.id, catatan, tanggal: Timestamp.fromDate(when), hariKe: dk };
-    const cyc = doc(db, "users", u, "cycles", S.cycle.id);
+    const cycleId = edit ? (edit.cycleId || S.cycle.id) : S.cycle.id;
+    if (edit) { reverse(batch, edit); feeLama.forEach((f) => reverse(batch, f)); } // kembalikan dulu efek lama, lalu tulis ulang
+    const ref = edit ? doc(db, "users", u, "transactions", edit.id) : doc(collection(db, "users", u, "transactions"));
+    const tanggal = edit && dk === edit.hariKe && edit.tanggal ? edit.tanggal : Timestamp.fromDate(when);
+    const base = { jenis: j, nominal, pocketId: from, cycleId, catatan, tanggal, hariKe: dk };
+    if (edit && edit.tagihanId) base.tagihanId = edit.tagihanId;
+    const cyc = doc(db, "users", u, "cycles", cycleId);
     const delta = {}; let n = 1;
 
     if (j === "keluar") {
@@ -433,7 +533,7 @@ export function createPockets({ db, S, $, esc, toast }) {
       if (fee > 0) {
         const env = harianEnv();
         batch.set(doc(collection(db, "users", u, "transactions")), {
-          jenis: "keluar", nominal: fee, pocketId: from, categoryId: CAT_ADMIN.id, envelopeId: env, cycleId: S.cycle.id,
+          jenis: "keluar", nominal: fee, pocketId: from, categoryId: CAT_ADMIN.id, envelopeId: env, cycleId,
           catatan: (j === "tarik" ? "Biaya tarik tunai" : "Biaya transfer"), tanggal: Timestamp.fromDate(when), hariKe: dk, terkait: ref.id,
         });
         if (env) batch.set(cyc, { terpakai: { [env]: increment(fee) }, totalTerpakai: increment(fee) }, { merge: true });
@@ -443,8 +543,10 @@ export function createPockets({ db, S, $, esc, toast }) {
     applyDelta(batch, delta);
     batch.set(doc(db, "directory", u), { jumlahCatatan: increment(n), lastActive: serverTimestamp() }, { merge: true });
     batch.commit().catch((e) => { console.error(e); toast("Catatan gagal tersimpan: " + (e.code || e.message)); });
-    ls.set("finix-from-" + j, from);
+    if (!edit) ls.set("finix-from-" + j, from);
     closeSheet();
+    xs.edit = null;
+    if (edit) { toast("Perubahan tersimpan ✏️"); return; }
     toast(j === "keluar" ? `${catOf({ jenis: j, categoryId: xs.cat }).ikon} ${fmtRp(nominal)} tercatat dari ${pk(from).nama}`
       : j === "masuk" ? `💰 ${fmtRp(nominal)} masuk ke ${pk(from).nama}`
       : `${j === "tarik" ? "🏧" : "🔁"} ${fmtRp(nominal)}: ${pk(from).nama} → ${pk(to).nama}`);

@@ -451,7 +451,24 @@ export const SAVING_PRESETS = [
   ['Dana Darurat', '🛟'], ['Liburan', '✈️'], ['Gadget', '📱'], ['Kendaraan', '🏍️'],
   ['Rumah', '🏠'], ['Pendidikan', '🎓'], ['Nikah', '💍'], ['Hari Tua', '🌴'],
 ];
-export const SAVING_ICONS = ['🎯', '🛟', '✈️', '📱', '🏍️', '🏠', '🎓', '💍', '🌴', '🎁', '💻', '🏥'];
+export const SAVING_ICONS = ['🎯', '🛟', '✈️', '📱', '🏍️', '🏠', '🎓', '💍', '🌴', '🎁', '💻', '🏥', '🚗', '🕌', '🤲', '👶', '🎉', '🛡️', '💰', '🧧'];
+
+// Ikon untuk tabungan bebas (di luar pocket): tabungan bank, deposito, reksa dana, emas, dst.
+export const BEBAS_ICONS = ['🏦', '💰', '🪙', '📈', '🐷', '🏧', '💎', '🥇', '💼', '🌱', '🧧', '💵', '📊', '🛡️', '🏠', '🎓'];
+export const JENIS_BEBAS = ['Tabungan', 'Deposito', 'Reksa dana', 'Emas', 'Saham', 'Lainnya'];
+
+// Daftar ikon lengkap untuk kategori, pos, dan tagihan (makanan, transport, sedekah, parkir, tol, dll.)
+export const IKON_UMUM = [
+  '🍜', '🍔', '🍕', '🍗', '🥗', '🍞', '☕', '🧋', '🥤', '🍿', '🛒', '🛍️',
+  '🛵', '🚗', '🚌', '🚆', '🚕', '⛽', '🅿️', '🛣️', '🚲', '🏍️', '✈️', '🚢',
+  '🤲', '🕌', '🙏', '❤️', '🎁', '🎂', '🎉', '💍',
+  '🗑️', '🏠', '💡', '💧', '🔥', '🔧', '🧹', '🧺', '🌐', '📶', '📱', '💻', '📺',
+  '🎮', '🎬', '🎧', '📚', '🎓', '✏️', '🖨️',
+  '👕', '👟', '💄', '💇', '🧴', '🪥',
+  '💊', '🏥', '🦷', '👶', '🍼', '🐾', '🐶', '🐱',
+  '🏋️', '⚽', '🏊', '🌴', '🏖️', '🎯', '🆘', '🛟',
+  '🧾', '💳', '💸', '💰', '🏦', '🪙', '📈', '🛡️', '🧧', '🏘️', '💼', '🔑',
+];
 
 // Total dana tabungan per pocket: { [pocketId]: nominal }
 export function savedByPocket(savings) {

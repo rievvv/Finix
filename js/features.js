@@ -4,14 +4,14 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   fmtRp, parseRp, dateKey, fmtTgl, computeGuard, prevCycle, analyze, compareWithPrevious, cycleTotals,
-  avgSpendByCategory, suggestBudgets, planMoney, simulate, paidKey, occurrencesInMonth, occurrencesInRange,
-  billStatus, tenorSchedule, catBudget, dailyTotal, countWeekdays, HARI_URUT, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
+  avgSpendByCategory, suggestBudgets, planMoney, paidKey, occurrencesInMonth, occurrencesInRange,
+  billStatus, tenorSchedule, catBudget, dailyTotal, countWeekdays, HARI_URUT, IKON_UMUM, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
   cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES, splitSalary, gajiList, salaryDateInCycle,
 } from "./calc.js";
 import { createReports } from "./laporan.js";
 
 const PALET = ["#FF7A00", "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EC4899", "#14B8A6", "#EF4444"];
-const IKON_TAGIHAN = ["🧾", "💡", "💧", "🌐", "📱", "🏠", "🚗", "💳", "🛡️", "📺", "🎓", "🏥"];
+const IKON_TAGIHAN = IKON_UMUM;
 const PRESET_TAGIHAN = [
   ["Listrik", "💡"], ["Air", "💧"], ["Internet", "🌐"], ["Pulsa / paket data", "📱"],
   ["Kos / KPR", "🏠"], ["Cicilan", "💳"], ["Asuransi", "🛡️"], ["Langganan", "📺"],
@@ -229,7 +229,6 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   /* ================================================================
      ANGGARAN
      ================================================================ */
-  let lastPlan = null;
   function renderBudget() {
     if (!ready()) return;
     const cd = S.cycleDoc, c = S.cycle;
@@ -237,7 +236,6 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const unpaid = unpaidInCycle();
     const unpaidTotal = unpaid.reduce((a, o) => a + o.nom, 0);
     const plan = planMoney({ guard: g, cycleDoc: cd, envelopes: S.envelopes, unpaidTotal, cycle: c });
-    lastPlan = plan; // dipakai simulator
 
     $("bud-aman").textContent = fmtRp(plan.aman);
     $("bud-perhari").textContent = `≈ ${fmtRp(plan.perHari)} per hari selama ${c.daysLeft} hari lagi`;
@@ -256,7 +254,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const spent = {};
     S.tx.filter((x) => x.jenis === "keluar").forEach((x) => { spent[x.categoryId] = (spent[x.categoryId] || 0) + x.nominal; });
     $("bud-groups").innerHTML = S.envelopes.map((e) => {
-      const cats = S.categories.filter((k) => k.envelopeId === e.id);
+      const cats = S.categories.filter((k) => k.envelopeId === e.id && !k.bebas);
       const alok = (cd.alokasi || {})[e.id] || 0;
       const sum = cats.reduce((a, k) => a + catBudget(k, c), 0);
       const over = sum > alok;
@@ -286,8 +284,21 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
             <div class="muted b-sub">${sub}${warn}</div>${info}</div>`;
         }).join("")}${cats.length ? "" : `<div class="empty" style="padding:8px">Belum ada kategori di pos ini.</div>`}<button class="add-cat" type="button" data-addcat="${esc(e.id)}">+ Tambah kategori di pos ini</button></div>`;
     }).join("");
-    renderSim();
+
+    // Kategori bebas: tidak punya anggaran, tapi tetap dihitung ke batas harian
+    const bebas = S.categories.filter((k) => k.bebas);
+    const totBebas = bebas.reduce((a, k) => a + (spent[k.id] || 0), 0);
+    $("bud-bebas").innerHTML = `<div class="card bgroup"><div class="bg-head"><span class="b-name"><b>🧺 Kategori bebas</b></span><small>Di luar anggaran · terpakai ${fmtRp(totBebas)}</small></div>
+      ${bebas.map((k) => `<div class="brow"><div class="b-top"><span class="b-name"><span>${esc(k.ikon)} ${esc(k.nama)}</span><button class="edit-btn" type="button" data-ecat="${esc(k.id)}" aria-label="Ubah kategori ${esc(k.nama)}">✏️</button></span><b>${fmtRp(spent[k.id] || 0)}</b></div></div>`).join("")}
+      ${bebas.length ? "" : `<div class="empty" style="padding:8px">Belum ada. Contoh: bayar sampah, parkir di luar anggaran, tol, sedekah.</div>`}
+      <div class="muted b-sub" style="padding:4px 2px 8px">Pengeluaran kategori ini tidak terikat anggaran kategori, tapi tetap mengurangi uang harian dan dikontrol oleh batas pengeluaran harian.</div>
+      <button class="add-cat" type="button" data-addbebas="1">+ Tambah kategori bebas</button></div>`;
   }
+  $("bud-bebas").addEventListener("click", (e) => {
+    const c = e.target.closest("[data-ecat]");
+    if (c) { const cat = S.categories.find((k) => k.id === c.dataset.ecat); if (cat) openCatSheet(cat); return; }
+    if (e.target.closest("[data-addbebas]")) openCatSheet(null, null, true);
+  });
 
   // simpan anggaran saat kolom ditinggalkan
   $("bud-groups").addEventListener("input", (e) => {
@@ -315,7 +326,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   $("bud-auto").addEventListener("click", async () => {
     if (S.categories.some((k) => k.anggaran) && !confirm("Anggaran yang sudah kamu isi akan diganti saran otomatis. Lanjut?")) return;
     const history = avgSpendByCategory(S.txAll, S.profile.tanggalGajian, 3);
-    const saran = suggestBudgets({ categories: S.categories, envelopes: S.envelopes, alokasi: S.cycleDoc.alokasi || {}, history });
+    const saran = suggestBudgets({ categories: S.categories.filter((k) => !k.bebas), envelopes: S.envelopes, alokasi: S.cycleDoc.alokasi || {}, history });
     const batch = writeBatch(db);
     S.categories.forEach((k) => {
       if (saran[k.id] === undefined || k.mode === "harian") return;
@@ -328,8 +339,8 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   });
 
   /* ---------- Ubah / tambah / hapus kategori dan ubah nama pos ---------- */
-  const IKON_KATEGORI = ["🍜", "🛵", "🛒", "📱", "🧋", "🎮", "🧾", "🆘", "☕", "👕", "💊", "🎬", "📚", "🐾", "⛽", "🎁", "💇", "🏋️", "🏠", "💡"];
-  const IKON_POS = ["🍚", "🧾", "🛟", "🎈", "💼", "🏠", "🚗", "🎓", "🏥", "✈️", "🎯", "💰"];
+  const IKON_KATEGORI = IKON_UMUM;
+  const IKON_POS = ["🍚", "🧾", "🛟", "🎈", "💼", "🏠", "🚗", "🎓", "🏥", "✈️", "🎯", "💰", "🤲", "🛣️", "🅿️", "🛒", "📱", "🎁", "🐾", "💳"];
   const cf = { id: null, ikon: "🧋", mode: "bulanan", hari: [], rinc: [] };
   const ef = { id: null, ikon: "🍚" };
   const renderPick = (box, cur) => $(box).querySelectorAll("button").forEach((b) => b.classList.toggle("sel", b.dataset.i === cur));
@@ -380,9 +391,10 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     renderModeKat();
   });
 
-  function openCatSheet(cat, envId) {
+  function openCatSheet(cat, envId, bebas = false) {
+    cf.bebas = cat ? !!cat.bebas : bebas;
     cf.id = cat ? cat.id : null; cf.ikon = cat ? cat.ikon || "🧋" : "🧋";
-    $("cf-title").textContent = cat ? "Ubah kategori" : "Tambah kategori";
+    $("cf-title").textContent = (cat ? "Ubah kategori" : "Tambah kategori") + (cf.bebas ? " bebas" : "");
     $("cf-nama").value = cat ? cat.nama : "";
     $("cf-pos").innerHTML = S.envelopes.map((e) => `<option value="${esc(e.id)}">${esc(e.ikon)} ${esc(e.nama)}</option>`).join("");
     $("cf-pos").value = cat ? cat.envelopeId : (envId || (S.envelopes[0] || {}).id);
@@ -391,6 +403,9 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     cf.rinc = cat && Array.isArray(cat.rincian) ? cat.rincian.map((r) => ({ nama: r.nama, nominal: Number(r.nominal) || 0 })) : [];
     $("cf-anggaran").value = cat && cat.mode !== "harian" && cat.anggaran ? cat.anggaran.toLocaleString("id-ID") : "";
     renderModeKat();
+    ["cf-wrap-pos", "cf-mode"].forEach((id) => { $(id).hidden = cf.bebas; });
+    $("cf-bebas-info").hidden = !cf.bebas;
+    if (cf.bebas) { $("cf-wrap-bulanan").hidden = true; $("cf-wrap-harian").hidden = true; }
     $("cf-delete").hidden = !cat; $("cf-error").textContent = "";
     renderPick("cf-ikon", cf.ikon);
     $("cat-sheet").hidden = false;
@@ -402,7 +417,8 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   $("bud-add").onclick = () => openCatSheet(null, null);
 
   $("cf-save").onclick = () => {
-    const nama = $("cf-nama").value.trim().slice(0, 24), envelopeId = $("cf-pos").value, anggaran = parseRp($("cf-anggaran").value);
+    const harianEnv = (S.envelopes.find((e) => e.untukHarian) || S.envelopes[0] || {}).id;
+    const nama = $("cf-nama").value.trim().slice(0, 24), envelopeId = cf.bebas ? harianEnv : $("cf-pos").value, anggaran = cf.bebas ? 0 : parseRp($("cf-anggaran").value);
     const err = $("cf-error");
     if (!nama) { err.textContent = "Nama kategorinya diisi dulu ya."; return; }
     if (!S.envelopes.some((e) => e.id === envelopeId)) { err.textContent = "Pilih pos untuk kategori ini."; return; }
@@ -412,8 +428,9 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const old = cf.id ? S.categories.find((k) => k.id === cf.id) : null;
     const id = old ? old.id : doc(collection(db, "users", uid, "categories")).id;
     const urutan = old ? (old.urutan ?? 0) : Math.max(-1, ...S.categories.map((k) => k.urutan ?? 0)) + 1;
-    const data = { ...(old || {}), id, nama, ikon: cf.ikon, envelopeId, anggaran, urutan, mode: cf.mode };
-    if (cf.mode === "harian") {
+    const data = { ...(old || {}), id, nama, ikon: cf.ikon, envelopeId, anggaran, urutan, mode: cf.bebas ? "bulanan" : cf.mode };
+    if (cf.bebas) data.bebas = true;
+    if (!cf.bebas && cf.mode === "harian") {
       const rincian = cf.rinc.filter((r) => r.nominal > 0).map((r) => ({ nama: String(r.nama || "").trim().slice(0, 30) || "Pengeluaran", nominal: r.nominal }));
       if (!cf.hari.length) { err.textContent = "Pilih minimal satu hari."; return; }
       if (!rincian.length) { err.textContent = "Isi minimal satu rincian pengeluaran harian beserta nominalnya."; return; }
@@ -430,7 +447,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
 
   $("cf-delete").onclick = () => {
     const cat = S.categories.find((k) => k.id === cf.id); if (!cat) return;
-    if (S.categories.length <= 1) { $("cf-error").textContent = "Minimal harus ada satu kategori."; return; }
+    if (!cat.bebas && S.categories.filter((k) => !k.bebas).length <= 1) { $("cf-error").textContent = "Minimal harus ada satu kategori anggaran."; return; }
     if (!confirm(`Hapus kategori “${cat.nama}”? Catatan lama dengan kategori ini tetap ada dan tampil sebagai “Lainnya”.`)) return;
     S.categories = S.categories.filter((k) => k.id !== cat.id);
     deleteDoc(doc(db, "users", S.user.uid, "categories", cat.id)).catch((e2) => { console.error(e2); toast("Gagal menghapus"); });
@@ -525,27 +542,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     if (a) openCatSheet(null, a.dataset.addcat);
   });
 
-  // Simulator
   const fmtInput = (el) => { const n = parseRp(el.value); el.value = n ? n.toLocaleString("id-ID") : ""; return n; };
-  function renderSim() {
-    if (!ready() || !lastPlan) return;
-    const belanja = parseRp($("sim-beli").value), rencana = parseRp($("sim-harian").value);
-    const s = simulate({ aman: lastPlan.aman, daysLeft: S.cycle.daysLeft, belanja, rencana });
-    const L = [];
-    if (belanja) {
-      L.push(s.kelebihan > 0
-        ? `<div class="sim-line bad">Melebihi uang aman sebesar <b>${fmtRp(s.kelebihan)}</b>. Sebaiknya ditunda atau dikurangi.</div>`
-        : `<div class="sim-line">Sisa uang aman jadi <b>${fmtRp(s.sisa)}</b>. Jatah per hari turun dari <b>${fmtRp(s.perHariSebelum)}</b> menjadi <b>${fmtRp(s.perHariSesudah)}</b>.</div>`);
-    }
-    if (rencana) {
-      if (s.habisTgl) L.push(`<div class="sim-line bad">Dengan ${fmtRp(rencana)} per hari, uangmu habis tanggal <b>${fmtTgl(s.habisTgl)}</b>, ${s.hariLebihAwal} hari sebelum gajian.</div>`);
-      else L.push(`<div class="sim-line ok">Dengan ${fmtRp(rencana)} per hari, uangmu cukup sampai gajian dan masih sisa <b>${fmtRp(s.saldoAkhir)}</b> 👍</div>`);
-    }
-    if (!belanja && !rencana) L.push(`<div class="sim-line muted">Isi salah satu kolom di atas untuk melihat hasilnya. Jatah aman sekarang: <b>${fmtRp(s.perHariSebelum)}</b> per hari.</div>`);
-    $("sim-out").innerHTML = L.join("");
-  }
-  $("sim-beli").addEventListener("input", () => { fmtInput($("sim-beli")); renderSim(); });
-  $("sim-harian").addEventListener("input", () => { fmtInput($("sim-harian")); renderSim(); });
 
   /* ================================================================
      KALENDER TAGIHAN
@@ -876,16 +873,16 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
       const spent = {};
       S.tx.filter((x) => x.jenis === "keluar").forEach((x) => { spent[x.categoryId] = (spent[x.categoryId] || 0) + x.nominal; });
       const baris = [];
-      S.envelopes.forEach((e) => S.categories.filter((k) => k.envelopeId === e.id).forEach((k) => {
+      S.envelopes.forEach((e) => S.categories.filter((k) => k.envelopeId === e.id && !k.bebas).forEach((k) => {
         const b = catBudget(k, c), u = spent[k.id] || 0;
         baris.push([e.nama, k.nama, k.mode === "harian" ? "Harian" : "Bulanan", b, u, b - u, b > 0 ? { v: (u / b) * 100, t: "pct" } : "-"]);
       }));
       const tb = baris.reduce((a, r) => a + r[3], 0), tu = baris.reduce((a, r) => a + r[4], 0);
       const pos = S.envelopes.map((e) => {
-        const ks = S.categories.filter((k) => k.envelopeId === e.id);
+        const ks = S.categories.filter((k) => k.envelopeId === e.id && !k.bebas);
         return [e.nama, (cd.alokasi || {})[e.id] || 0, ks.reduce((a, k) => a + catBudget(k, c), 0), ks.reduce((a, k) => a + (spent[k.id] || 0), 0)];
       });
-      const harian = S.categories.filter((k) => k.mode === "harian").map((k) => [
+      const harian = S.categories.filter((k) => k.mode === "harian" && !k.bebas).map((k) => [
         k.nama, HARI_URUT.filter(([v]) => (k.hariAktif || []).includes(v)).map(([, n]) => n).join(", "),
         (k.rincian || []).map((r) => `${r.nama} ${fmtRp(r.nominal)}`).join("; "), dailyTotal(k), countWeekdays(c.start, c.next, k.hariAktif), catBudget(k, c)]);
       const sheets = [
@@ -893,6 +890,8 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
           baris, ringkas: [["Total anggaran", tb], ["Total terpakai", tu], ["Total sisa", tb - tu]] },
         { nama: "Per Pos", kolom: [{ h: "Pos", w: 22 }, { h: "Jatah siklus", w: 16, t: "rp" }, { h: "Anggaran kategori", w: 18, t: "rp" }, { h: "Terpakai", w: 16, t: "rp" }], baris: pos },
       ];
+      const bebasK = S.categories.filter((k) => k.bebas);
+      if (bebasK.length) sheets.push({ nama: "Kategori Bebas", kolom: [{ h: "Kategori", w: 26 }, { h: "Terpakai", w: 16, t: "rp" }], baris: bebasK.map((k) => [k.nama, spent[k.id] || 0]), ringkas: [["Total terpakai", bebasK.reduce((a, k) => a + (spent[k.id] || 0), 0)]] });
       if (harian.length) sheets.push({ nama: "Rincian Harian", kolom: [{ h: "Kategori", w: 18 }, { h: "Hari", w: 22 }, { h: "Rincian", w: 40 }, { h: "Per hari", w: 14, t: "rp" }, { h: "Jumlah hari", w: 11, t: "angka" }, { h: "Total siklus", w: 15, t: "rp" }], baris: harian });
       return { periode: `Siklus ${tglLengkap(c.start)} - ${tglLengkap(akhirSiklus(c))}`, sheets };
     },
