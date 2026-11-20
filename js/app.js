@@ -46,7 +46,17 @@ const BISA_CATAT = ["dashboard", "pockets", "savings", "tx", "budget", "bills"];
 let currentScreen = "auth";
 // Tombol / gestur kembali di HP menutup pop-up atau kembali ke layar sebelumnya, tidak langsung keluar aplikasi
 const nav = initBackNav({ getScreen: () => currentScreen, goTo: (n) => navigate(n), toast: (m) => toast(m) });
+// Splash FINIX by Nexora: tampil minimal ~1,4 detik saat aplikasi dibuka, hilang setelah layar pertama siap
+const splashMulai = Date.now();
+let splashSelesai = false;
+function tutupSplash() {
+  if (splashSelesai) return; splashSelesai = true;
+  const el = document.getElementById("splash"); if (!el) return;
+  setTimeout(() => { el.classList.add("off"); setTimeout(() => el.remove(), 600); }, Math.max(0, 1400 - (Date.now() - splashMulai)));
+}
+setTimeout(tutupSplash, 6000); // pengaman kalau koneksi lambat
 function show(name) {
+  tutupSplash();
   currentScreen = name;
   nav.catat(name);
   SCREENS.forEach((n) => { $("screen-" + n).hidden = n !== name; });

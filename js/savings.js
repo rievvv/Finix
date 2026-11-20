@@ -42,6 +42,7 @@ export function createSavings({ db, S, $, esc, toast }) {
         <div class="sv-head"><span class="sv-ic">${esc(x.ikon || "🏦")}</span><span>${esc(x.nama)}</span><span class="sv-jenis">${esc(x.jenis || "Tabungan")}</span></div>
         <div class="sv-big">${esc(S.mask(fmtRp(x.terkumpul || 0)))}</div>
         ${info ? `<div class="muted" style="margin-top:6px">${esc(info)}</div>` : ""}
+        ${pk(x.pocketId) ? `<span class="sv-pocket">${esc(pkIcon(pk(x.pocketId)) + " Disimpan di " + pk(x.pocketId).nama)}</span>` : ""}
         ${x.keterangan ? `<div class="sv-note">${esc(x.keterangan)}</div>` : ""}
         <div class="sv-act">
           <button class="mini-btn ok" type="button" data-act="fsetor" data-id="${esc(x.id)}">+ Pindah dana</button>
@@ -174,10 +175,18 @@ export function createSavings({ db, S, $, esc, toast }) {
   $("fb-awal").addEventListener("input", () => fmtInput($("fb-awal")));
   $("fb-saldo").addEventListener("input", () => fmtInput($("fb-saldo")));
 
+  // Pocket penyimpan untuk tabungan bebas: pilih yang ada, atau buat pocket baru (saldo Rp 0)
+  $("fb-newpk-tipe").innerHTML = Object.entries(POCKET_TYPES).map(([k, v]) => `<option value="${k}">${v.ikon} ${v.label}</option>`).join("");
+  const toggleFbNew = () => { $("fb-newpk-box").hidden = $("fb-pocket").value !== NEW; };
+  $("fb-pocket").addEventListener("change", () => { toggleFbNew(); if (!$("fb-newpk-box").hidden) setTimeout(() => $("fb-newpk-nama").focus(), 50); });
+
   function openFree(x) {
     fb.id = x ? x.id : null; fb.jenis = x ? x.jenis || "Tabungan" : "Tabungan"; fb.ikon = x ? x.ikon || "🏦" : "🏦";
     $("fb-title").textContent = x ? "Ubah tabungan bebas" : "Tambah tabungan bebas";
     $("fb-nama").value = x ? x.nama : "";
+    $("fb-pocket").innerHTML = `<option value="">— Belum dipilih —</option>` + S.pockets.map((p) => `<option value="${esc(p.id)}">${esc(pkIcon(p) + " " + p.nama)} · ${esc(S.mask(fmtRp(p.saldo || 0)))}</option>`).join("") + `<option value="${NEW}">➕ Buat pocket baru…</option>`;
+    $("fb-pocket").value = x && pk(x.pocketId) ? x.pocketId : "";
+    $("fb-newpk-nama").value = ""; $("fb-newpk-tipe").value = "bank"; toggleFbNew();
     $("fb-awal").value = ""; $("fb-wrap-awal").hidden = !!x;
     $("fb-saldo").value = x && x.terkumpul ? x.terkumpul.toLocaleString("id-ID") : ""; $("fb-wrap-saldo").hidden = !x;
     $("fb-bunga").value = x && x.bunga ? x.bunga : ""; $("fb-tempo").value = x && x.tempo ? x.tempo : "";
@@ -207,7 +216,16 @@ export function createSavings({ db, S, $, esc, toast }) {
     if (saldo >= 1e12) { err.textContent = "Nominalnya terlalu besar."; return; }
     if (bunga < 0 || bunga > 100) { err.textContent = "Bunga antara 0 sampai 100 persen ya."; return; }
     if (S.savings.some((y) => y.id !== fb.id && y.nama.toLowerCase() === nama.toLowerCase())) { err.textContent = "Nama ini sudah ada."; return; }
-    const data = { tipe: "bebas", nama, jenis: fb.jenis, ikon: fb.ikon, keterangan, bunga: fb.jenis === "Deposito" ? bunga : 0, tempo: tempo || "" };
+    let pocketId = $("fb-pocket").value, newPk = null;
+    if (pocketId === NEW) {
+      const pn = $("fb-newpk-nama").value.trim().slice(0, 30), pt = $("fb-newpk-tipe").value;
+      if (!pn) { err.textContent = "Nama pocket barunya diisi dulu ya."; return; }
+      if (S.pockets.some((p) => p.nama.toLowerCase() === pn.toLowerCase())) { err.textContent = "Nama pocket ini sudah ada. Pilih dari daftar pocket saja ya."; return; }
+      const pref = doc(collection(db, "users", uid(), "pockets"));
+      newPk = { ref: pref, data: { nama: pn, tipe: pt, ikon: POCKET_TYPES[pt].ikon, keterangan: "", saldo: 0, urutan: S.pockets.length, createdAt: serverTimestamp() } };
+      pocketId = pref.id;
+    }
+    const data = { tipe: "bebas", nama, jenis: fb.jenis, ikon: fb.ikon, keterangan, pocketId: pocketId || "", bunga: fb.jenis === "Deposito" ? bunga : 0, tempo: tempo || "" };
     const ref = x ? doc(db, "users", uid(), "savings", x.id) : doc(collection(db, "users", uid(), "savings"));
     let riwayat = x && Array.isArray(x.riwayat) ? x.riwayat : [];
     if (x) {
@@ -219,9 +237,14 @@ export function createSavings({ db, S, $, esc, toast }) {
       if (saldo) riwayat = [{ tgl: hariIniKey(), j: "awal", n: saldo }];
     }
     data.riwayat = riwayat;
-    setDoc(ref, data, { merge: true }).catch((e2) => { console.error(e2); toast("Gagal tersimpan: " + (e2.code || e2.message)); });
+    const gagal = (e2) => { console.error(e2); toast("Gagal tersimpan: " + (e2.code || e2.message)); };
+    if (newPk) {
+      const batch = writeBatch(db);
+      batch.set(newPk.ref, newPk.data); batch.set(ref, data, { merge: true });
+      batch.commit().catch(gagal);
+    } else setDoc(ref, data, { merge: true }).catch(gagal);
     closeFree();
-    toast(x ? "Tabungan diperbarui" : `${fb.ikon} ${nama} ditambahkan`);
+    toast(newPk ? `${fb.ikon} ${nama} ditambahkan, pocket “${newPk.data.nama}” dibuat` : x ? "Tabungan diperbarui" : `${fb.ikon} ${nama} ditambahkan`);
   };
   $("fb-delete").onclick = () => {
     const x = sv(fb.id); if (!x) return;
@@ -249,6 +272,7 @@ export function createSavings({ db, S, $, esc, toast }) {
       $("sm-info").textContent = mode === "setor"
         ? "Saldo pocket berkurang sebesar nominal ini, lalu masuk ke tabungan. Ini bukan pengeluaran, jadi tidak mengurangi anggaran."
         : `Saldo ${x.nama} saat ini ${S.mask(fmtRp(x.terkumpul || 0))}. Dana yang ditarik menambah saldo pocket yang dipilih.`;
+      if (pk(x.pocketId)) $("sm-pocket").value = x.pocketId;
       $("sm-nominal").value = ""; $("sm-error").textContent = "";
       $("sm-save").textContent = mode === "setor" ? "Pindahkan" : "Tarik";
       $("sv-move-sheet").hidden = false;

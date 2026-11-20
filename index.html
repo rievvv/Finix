@@ -461,11 +461,29 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
 .av-stage canvas{width:100%;height:100%;display:block}
 .av-stage:after{content:"";position:absolute;inset:0;border:2px solid rgba(255,255,255,.85);border-radius:18px;pointer-events:none}
 .av-crop input[type=range]{width:100%;min-height:0;padding:0;border:0;accent-color:var(--brand)}
-#newpk-box{background:#FFF3E0;border-radius:14px;padding:12px;margin-bottom:12px}
-#newpk-box label{margin-bottom:10px}
+#newpk-box,.newpk-box{background:#FFF3E0;border-radius:14px;padding:12px;margin-bottom:12px}
+#newpk-box label,.newpk-box label{margin-bottom:10px}
+
+/* ====== Splash FINIX by Nexora ====== */
+#splash{position:fixed;inset:0;z-index:200;background:#FFF7EC;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;transition:opacity .45s ease,visibility .45s}
+#splash.off{opacity:0;visibility:hidden;pointer-events:none}
+#splash .logo{animation:spl-pop .6s ease both}
+#splash h1{font-size:44px;font-weight:800;letter-spacing:.18em;margin:18px 0 0 .18em;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;animation:spl-up .6s .15s ease both}
+#splash .by{margin-top:8px;font-size:14px;font-weight:600;letter-spacing:.12em;color:var(--muted);animation:spl-up .6s .3s ease both}
+#splash .by b{color:var(--ink);font-weight:800;letter-spacing:.14em}
+@keyframes spl-pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+@keyframes spl-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){#splash *{animation:none!important}}
+.brand .by-s{font-size:12px;font-weight:600;letter-spacing:.1em;color:var(--muted);margin-top:2px}
+.brand .by-s b{color:var(--ink)}
 </style>
 </head>
 <body>
+<div id="splash" aria-hidden="true">
+  <div class="logo"><svg viewBox="0 0 64 64"><use href="#finix-mark"/></svg></div>
+  <h1>FINIX</h1>
+  <div class="by">by <b>Nexora</b></div>
+</div>
 
 <!-- Ikon & logo (didefinisikan sekali, dipakai ulang) -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -494,6 +512,7 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <div class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#finix-mark"/></svg></div>
     <h1>Finix</h1>
     <p>Gaji bangkit, dompet aman.</p>
+    <div class="by-s">by <b>Nexora</b></div>
   </div>
   <div class="tabs">
     <button id="tab-login" class="tab active" type="button">Masuk</button>
@@ -1038,6 +1057,12 @@ label.check input{width:22px;height:22px;min-height:0;margin:0;flex:none;accent-
     <label>Nama<input id="fb-nama" type="text" maxlength="40" placeholder="Contoh: Deposito BCA, Tabungan BRI" autocomplete="off"></label>
     <div class="muted" style="margin-bottom:6px;font-weight:600">Jenis</div>
     <div id="fb-jenis" class="chips wrap"></div>
+    <label>Dananya disimpan di pocket mana?<select id="fb-pocket" class="sel"></select></label>
+    <div id="fb-newpk-box" class="newpk-box" hidden>
+      <label>Nama pocket baru<input id="fb-newpk-nama" type="text" maxlength="30" placeholder="Contoh: SeaBank, Deposito BCA" autocomplete="off"></label>
+      <label style="margin-bottom:0">Jenis<select id="fb-newpk-tipe" class="sel"></select></label>
+      <div class="muted" style="margin-top:8px">Pocket baru dibuat dengan saldo Rp 0. Isi saldonya nanti lewat menu Pocket.</div>
+    </div>
     <label id="fb-wrap-awal">Saldo awal (Rp), opsional<input id="fb-awal" type="text" inputmode="numeric" placeholder="Uang yang sudah ada di sini, tidak memotong pocket" autocomplete="off"></label>
     <label id="fb-wrap-saldo" hidden>Saldo saat ini (Rp), ubah kalau ada bunga atau koreksi<input id="fb-saldo" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></label>
     <div id="fb-dep" hidden>
