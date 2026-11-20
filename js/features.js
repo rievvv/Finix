@@ -6,7 +6,7 @@ import {
   fmtRp, parseRp, dateKey, fmtTgl, computeGuard, prevCycle, analyze, compareWithPrevious, cycleTotals,
   avgSpendByCategory, suggestBudgets, planMoney, paidKey, occurrencesInMonth, occurrencesInRange,
   billStatus, tenorSchedule, catBudget, dailyTotal, countWeekdays, HARI_URUT, IKON_UMUM, monthCells, parseKey, fmtRingkas, HARI_SINGKAT, BULAN_PANJANG,
-  cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES, splitSalary, gajiList, salaryDateInCycle,
+  cashflow, flowByCycle, forecastBalance, CAT_ADMIN, POCKET_TYPES, splitSalary, gajiList, salaryDateInCycle, savingProgress,
 } from "./calc.js";
 import { createReports } from "./laporan.js";
 
@@ -59,23 +59,96 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const runway = hs ? "" : f.runway === null ? "Belum ada data pengeluaran untuk prakiraan" : `Cukup ±${f.runway} hari dengan pola belanjamu`;
     const nudges = [];
     if (S.pockets.length && saldo === 0 && !S.pockets.some((p) => p.saldo)) nudges.push(`<div class="card nudge"><span>👛 Saldo pocket masih Rp 0. Isi saldo awal tiap pocket supaya dashboard akurat.</span><button class="mini-btn" type="button" data-go="pockets">Buka Pocket</button></div>`);
+    // Susunan HP: total saldo paling atas, di bawahnya "menuju gajian" dan "boleh dipakai hari ini" berdampingan
     $("dash-hero").innerHTML = `
       <div class="card hc hc-saldo"><div class="hc-top"><span>💰 Total saldo</span>${S.eyeBtn("saldo")}</div>
         <div class="hc-big">${esc(S.mask(fmtRp(saldo)))}</div>
         <div class="hc-sub">${S.pockets.length} pocket${runway ? " · " + esc(runway) : ""}</div></div>
-      <div class="card hc"><div class="hc-top"><span>🗓️ Menuju gajian</span>${S.eyeBtn("gajian")}</div>
+      <div class="card hc hc-half"><div class="hc-top"><span>🗓️ Menuju gajian</span>${S.eyeBtn("gajian")}</div>
         <div class="hc-big">${hg ? "H-••" : esc(dayTxt)}</div>
-        <div class="hc-sub muted">${hg ? "Disembunyikan" : `Gajian ${esc(fmtTgl(c.next))} · hari ke-${c.dayNumber} dari ${c.totalDays}`}</div>
-        <div class="bar" style="margin-top:10px"><i style="width:${g.timePct}%;background:#B9A894"></i></div></div>
-      <div class="card hc guard s-${g.status}"><div class="hc-top"><span class="pill">${SL[g.status]}</span></div>
-        <div class="hc-sub muted" style="margin-top:8px">Boleh dipakai hari ini</div>
+        <div class="hc-sub muted">${hg ? "Disembunyikan" : `Gajian ${esc(fmtTgl(c.next))} · hari ke-${c.dayNumber}/${c.totalDays}`}</div>
+        <div class="bar" style="margin-top:8px"><i style="width:${g.timePct}%;background:#B9A894"></i></div></div>
+      <div class="card hc hc-half guard s-${g.status}"><div class="hc-top"><span class="pill">${SL[g.status]}</span></div>
+        <div class="hc-sub muted">Boleh dipakai hari ini</div>
         <div class="hc-big" style="color:var(--s)">${fmtRp(Math.max(0, g.todayLeft))}</div>
-        <div class="hc-sub muted">${g.todayLeft < 0 ? `Lewat ${fmtRp(-g.todayLeft)} dari batas` : `Batas harian ${fmtRp(g.dailyLimit)} · terpakai ${fmtRp(g.spentToday)}`}</div></div>
-      <div class="card hc"><div class="hc-top"><span>🔮 Saldo saat gajian (prakiraan)</span></div>
-        <div class="hc-big" style="${f.proj < 0 && !hs ? "color:var(--merah)" : ""}">${esc(S.mask((f.proj < 0 ? "−" : "") + fmtRp(Math.abs(f.proj))))}</div>
-        <div class="hc-sub muted">Rata-rata belanja ${fmtRp(f.avg)}/hari${unpaid ? ` + tagihan ${fmtRp(unpaid)}` : ""}</div></div>
+        <div class="hc-sub muted">${g.todayLeft < 0 ? `Lewat ${fmtRp(-g.todayLeft)}` : `Batas ${fmtRp(g.dailyLimit)}/hari`}</div></div>
       ${nudges.join("")}`;
   }
+  // Diagram garis ringkas (SVG): pemasukan dan pengeluaran per siklus
+  function lineChart(rows) {
+    const W = 320, H = 160, L = 34, R = 10, T = 10, B = 24;
+    const max = Math.max(1, ...rows.map((r) => Math.max(r.masuk, r.keluar)));
+    const x = (i) => L + (rows.length > 1 ? (i * (W - L - R)) / (rows.length - 1) : (W - L - R) / 2);
+    const y = (v) => T + (H - T - B) * (1 - v / max);
+    const pts = (k) => rows.map((r, i) => `${x(i).toFixed(1)},${y(r[k]).toFixed(1)}`).join(" ");
+    const grid = [0, 0.5, 1].map((fr) => { const yy = T + (H - T - B) * (1 - fr); return `<line class="gl" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text x="${L - 4}" y="${yy + 3}" text-anchor="end">${fr ? fmtRingkas(max * fr) : "0"}</text>`; }).join("");
+    const step = Math.ceil(rows.length / 6);
+    const labels = rows.map((r, i) => ((rows.length - 1 - i) % step === 0 ? `<text x="${x(i).toFixed(1)}" y="${H - 7}" text-anchor="middle">${esc(r.label)}</text>` : "")).join("");
+    const dots = (k, warna) => rows.map((r, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(r[k]).toFixed(1)}" r="${r.isCurrent ? 4 : 2.6}" fill="${warna}"/>`).join("");
+    const cols = rows.map((r, i) => { const w = (W - L - R) / Math.max(1, rows.length - 1); return `<rect class="lp" x="${(x(i) - w / 2).toFixed(1)}" y="${T}" width="${w.toFixed(1)}" height="${H - T - B}" fill="transparent" data-t="${esc(r.label + " · masuk " + fmtRp(r.masuk) + " · keluar " + fmtRp(r.keluar))}"/>`; }).join("");
+    return `<svg class="lc" viewBox="0 0 ${W} ${H}" role="img" aria-label="Diagram garis pemasukan dan pengeluaran per siklus">${grid}${labels}
+      <polyline class="ln" stroke="#10B981" points="${pts("masuk")}"/><polyline class="ln" stroke="#FF9A3D" points="${pts("keluar")}"/>${dots("masuk", "#10B981")}${dots("keluar", "#FF9A3D")}${cols}</svg>`;
+  }
+
+  // Saran / nasihat keuangan: aturan sederhana berdasarkan data siklus berjalan
+  function adviceCard() {
+    const c = S.cycle, tgl = S.profile.tanggalGajian, gaji = S.profile.gajiBulanan || 0;
+    const g = guard(), m = (n) => esc(S.mask(fmtRp(n)));
+    const f = cashflow({ tx: S.txAll, startKey: c.startKey, endKey: c.endKey });
+    const a = analyze({ tx: S.txAll, categories: S.categories.concat([CAT_ADMIN]), envelopes: S.envelopes, startKey: c.startKey, endKey: c.endKey });
+    const out = [];
+    if (g.status === "merah") out.push(["🚨", g.remaining <= 0 ? "Jatah harianmu sudah habis. <b>Tahan dulu belanja keinginan</b> sampai gajian dan hanya bayar yang benar-benar perlu." : "Tempo belanjamu terlalu cepat. Coba <b>pangkas 1–2 pengeluaran non-esensial</b> (jajan, hiburan) mulai hari ini supaya uang cukup sampai gajian."]);
+    else if (g.status === "kuning") out.push(["⚠️", "Pengeluaranmu mendekati batas harian. Tunda dulu pembelian yang <b>bukan kebutuhan</b> selama 2–3 hari ke depan."]);
+    else out.push(["💪", "Pengeluaranmu terkendali. Kalau di akhir siklus masih ada sisa, <b>langsung pindahkan ke tabungan</b> supaya tidak habis tanpa terasa."]);
+
+    const idealSave = Math.round(gaji * 0.2 / 1000) * 1000;
+    if (f.inc > 0 && f.rate !== null) {
+      if (f.rate < 10) out.push(["🐷", `Tingkat tabunganmu baru <b>${Math.round(f.rate)}%</b>. Targetkan minimal 10%, idealnya 20% dari pemasukan${idealSave ? ` (±${m(idealSave)} per bulan)` : ""}.`]);
+      else if (f.rate < 20) out.push(["📈", `Tingkat tabunganmu <b>${Math.round(f.rate)}%</b>, sudah baik. Naikkan pelan-pelan ke 20% dengan menyisihkan di awal gajian.`]);
+      else out.push(["🌟", `Tingkat tabunganmu <b>${Math.round(f.rate)}%</b>, luar biasa. Pastikan surplusnya benar-benar dipindah ke tabungan, bukan dibiarkan menganggur di dompet harian.`]);
+    } else if (idealSave) out.push(["🐷", `Biasakan <b>menabung di awal</b>, bukan dari sisa. Untuk gajimu, 20% itu sekitar <b>${m(idealSave)}</b> per bulan.`]);
+
+    // Dana darurat: 3–6x pengeluaran bulanan
+    const bulanan = cycleTotals(S.txAll, tgl, 6).filter((r) => r.total > 0).map((r) => r.total);
+    const rataBulan = bulanan.length ? bulanan.reduce((x, y) => x + y, 0) / bulanan.length : gaji * 0.7;
+    const simpan = S.savings.reduce((x, y) => x + (y.terkumpul || 0), 0);
+    if (rataBulan > 0) {
+      if (!S.savings.length) out.push(["🛟", `Kamu belum punya tabungan di Finix. Mulai dari <b>dana darurat</b>: target 3–6 kali pengeluaran bulanan (±${m(rataBulan * 3)} sampai ${m(rataBulan * 6)}). Menabung Rp 50.000 per minggu pun sudah awal yang bagus.`]);
+      else if (simpan < rataBulan * 3) out.push(["🛟", `Tabunganmu ${m(simpan)}, belum menyentuh 3× pengeluaran bulanan (±${m(rataBulan * 3)}). <b>Prioritaskan dana darurat</b> sebelum tujuan lain.`]);
+      else if (simpan >= rataBulan * 6) out.push(["🛡️", "Dana daruratmu sudah kuat (lebih dari 6× pengeluaran bulanan). Kelebihannya bisa diarahkan ke tujuan jangka panjang, dan pelajari dulu risikonya kalau ingin berinvestasi."]);
+    }
+
+    // Tagihan dan cicilan
+    const occ = occurrencesInRange(S.bills, c.start, c.next);
+    const telat = occ.filter((o) => !o.paid && billStatus(o).kode === "telat");
+    const cicilan = occ.filter((o) => o.bill.tipe === "tenor").reduce((x, o) => x + o.nom, 0);
+    if (telat.length) out.push(["⏰", `Ada <b>${telat.length} tagihan telat</b>. Bayar secepatnya supaya tidak kena denda atau mengganggu riwayat kreditmu.`]);
+    else if (gaji && cicilan / gaji > 0.3) out.push(["💳", `Cicilanmu bulan ini sekitar <b>${Math.round((cicilan / gaji) * 100)}%</b> dari gaji. Batas sehat umumnya maksimal 30%, jadi hindari menambah cicilan baru dulu.`]);
+
+    // Kebiasaan belanja
+    const top = a.byCategory[0];
+    if (a.small.count >= 5 && a.total > 0 && a.small.total / a.total >= 0.1) out.push(["🧋", `Pengeluaran kecil (di bawah Rp 25.000) sudah <b>${Math.round((a.small.total / a.total) * 100)}%</b> dari total. Coba aturan 24 jam: tunda belanja kecil sehari, banyak yang ternyata tidak jadi dibeli.`]);
+    else if (top && top.pct >= 45 && a.count >= 5) out.push(["🎯", `<b>${esc(top.nama)}</b> menyedot ${Math.round(top.pct)}% pengeluaranmu. Coba cek apakah ada yang bisa dihemat di situ.`]);
+
+    // Target tabungan bertenggat
+    const tg = S.savings.filter((x) => x.tipe !== "bebas").map((x) => ({ x, p: savingProgress(x) })).find((r) => r.p.perBulan && !r.p.tercapai);
+    if (tg) out.push(["🎯", `Agar <b>${esc(tg.x.nama)}</b> tercapai tepat waktu, sisihkan ±<b>${m(tg.p.perBulan)}</b> per bulan.`]);
+
+    const umum = [
+      "Bayar dirimu sendiri dulu: pindahkan jatah tabungan begitu gaji masuk, baru belanja dari sisanya.",
+      "Cek langganan bulananmu (streaming, aplikasi, paket data). Yang jarang dipakai lebih baik dihentikan.",
+      "Pisahkan pocket untuk tabungan dari pocket untuk belanja harian supaya tidak tergoda memakainya.",
+      "Aturan 50/30/20 bisa jadi patokan: 50% kebutuhan, 30% keinginan, 20% tabungan dan cicilan.",
+      "Sebelum membeli barang mahal, bandingkan harga dan tunggu 24 jam. Kalau masih ingin, baru beli.",
+      "Catat setiap pengeluaran, termasuk yang kecil. Yang tercatat bisa dikendalikan.",
+      "Dana darurat sebaiknya disimpan di tempat yang aman dan mudah dicairkan, bukan di aset yang naik turun.",
+    ];
+    out.push(["💡", umum[(c.dayNumber + new Date(c.start).getMonth()) % umum.length]]);
+    const tampil = out.slice(0, 5);
+    return `<div class="card advice"><h4>Saran keuangan untukmu</h4><div class="muted">Berdasarkan data siklus ini</div>${tampil.map(([i, t]) => `<div class="insight"><span>${i}</span><span>${t}</span></div>`).join("")}
+      <div class="advice-note muted">Saran umum berdasarkan catatanmu, bukan nasihat investasi atau hukum.</div></div>`;
+  }
+
   // Arus kas: pemasukan vs pengeluaran, sebaran saldo per pocket, perbandingan antar siklus
   function renderFlow() {
     const { startKey, endKey } = dashRange();
@@ -92,6 +165,12 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
       <div class="card kpi"><div class="k">Selisih (arus kas bersih)</div><div class="v ${net >= 0 ? "n-in" : "n-out"}">${net >= 0 ? "+" : "−"}${fmtRp(Math.abs(net))}</div></div>
       <div class="card kpi"><div class="k">Tingkat tabungan</div><div class="v">${f.rate === null ? "–" : Math.round(f.rate) + "%"}</div><div class="d muted">${f.rate === null ? "belum ada pemasukan" : f.rate >= 20 ? "sehat 👍" : f.rate >= 0 ? "bisa ditingkatkan" : "defisit ⚠️"}</div></div></div>`;
 
+    if (dash.period === "year") {
+      const rows12 = flowByCycle(S.txAll, S.profile.tanggalGajian, 12);
+      $("dash-flow").innerHTML = kpis + `<div class="card"><h4>Pemasukan vs pengeluaran, 12 siklus</h4><div class="muted">Satu titik = satu siklus gajian. Ketuk titik untuk melihat nominalnya.</div>
+        <div class="lc-legend"><span><i class="dot" style="background:var(--hijau)"></i>Pemasukan</span><span><i class="dot" style="background:#FF9A3D"></i>Pengeluaran</span></div>${lineChart(rows12)}</div>`;
+      return;
+    }
     const chart = `<div class="card span2"><h4>Arus kas harian</h4><div class="muted"><span class="dot" style="background:var(--hijau);display:inline-block"></span> pemasukan &nbsp; <span class="dot" style="background:#FF9A3D;display:inline-block"></span> pengeluaran · ketuk batang untuk detail</div>
       <div class="fbars">${bars}</div><div class="axis"><span>${fmtTgl(f.byDay[0].date)}</span><span>${fmtTgl(mid)}</span><span>${fmtTgl(last)}</span></div></div>`;
 
@@ -135,6 +214,10 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     const todayKey = dateKey(today0());
     const a = analyze({ tx: S.txAll, categories: S.categories.concat([CAT_ADMIN]), envelopes: S.envelopes, startKey, endKey });
     $("dash-range").textContent = `${fmtTgl(parseKey(startKey))} – ${fmtTgl(parseKey(endKey))}`;
+    // Tampilan tahunan cukup diagram garis (di bagian arus keuangan), jadi analisis detail disembunyikan
+    const tahunan = dash.period === "year";
+    $("dash-ana-title").hidden = $("dash-kpis").hidden = $("dash-body").hidden = tahunan;
+    if (tahunan) return;
 
     // KPI
     let banding = "";
@@ -152,7 +235,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
       <div class="card kpi"><div class="k">Hari termahal</div><div class="v">${a.peakDay && a.peakDay.total ? fmtRp(a.peakDay.total) : "–"}</div><div class="d muted">${a.peakDay && a.peakDay.total ? fmtTgl(a.peakDay.date) : "belum ada"}</div></div>`;
 
     if (!a.count) {
-      $("dash-body").innerHTML = `<div class="card"><div class="empty">Belum ada pengeluaran di periode ini.<br>Catat pengeluaran dulu, nanti grafiknya muncul di sini 📊</div></div>${cycleCompareCard()}`;
+      $("dash-body").innerHTML = `<div class="card"><div class="empty">Belum ada pengeluaran di periode ini.<br>Catat pengeluaran dulu, nanti grafiknya muncul di sini 📊</div></div><div class="grid2" style="margin-top:14px">${adviceCard()}${cycleCompareCard()}</div>`;
       return;
     }
 
@@ -196,7 +279,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
     }
     const wawasan = `<div class="card"><h4>Wawasan untukmu</h4>${tips.map(([i, tx]) => `<div class="insight"><span>${i}</span><span>${tx}</span></div>`).join("")}</div>`;
 
-    $("dash-body").innerHTML = `<div class="grid2">${harian.replace('class="card"', 'class="card span2"')}${kategori}${pos}${minggu}${wawasan}${cycleCompareCard()}</div>`;
+    $("dash-body").innerHTML = `<div class="grid2">${harian.replace('class="card"', 'class="card span2"')}${kategori}${pos}${minggu}${wawasan}${adviceCard()}${cycleCompareCard()}</div>`;
   }
 
   function cycleCompareCard() {
@@ -223,7 +306,7 @@ export function createFeatures({ db, S, $, esc, toast, go }) {
   $("dash-from").addEventListener("change", gantiTanggal);
   $("dash-to").addEventListener("change", gantiTanggal);
   $("screen-dashboard").addEventListener("click", (e) => {
-    const bar = e.target.closest(".vb, .fb"); if (bar) toast(bar.dataset.t);
+    const bar = e.target.closest(".vb, .fb, .lp"); if (bar) toast(bar.dataset.t);
   });
 
   /* ================================================================

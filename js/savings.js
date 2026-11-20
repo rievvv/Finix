@@ -94,14 +94,20 @@ export function createSavings({ db, S, $, esc, toast }) {
   $("sf-ikon").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { f.ikon = b.dataset.i; renderIkon(); } });
   $("sf-target").addEventListener("input", () => fmtInput($("sf-target")));
 
+  // Pilihan penyimpanan: pocket yang sudah ada, atau "Buat pocket baru" (nama + jenis, saldo awal Rp 0)
+  const NEW = "__new__";
+  $("sf-newpk-tipe").innerHTML = Object.entries(POCKET_TYPES).map(([k, v]) => `<option value="${k}">${v.ikon} ${v.label}</option>`).join("");
+  const toggleNew = () => { $("newpk-box").hidden = $("sf-pocket").value !== NEW; };
+  $("sf-pocket").addEventListener("change", () => { toggleNew(); if (!$("newpk-box").hidden) setTimeout(() => $("sf-newpk-nama").focus(), 50); });
+
   function openSheet(x) {
-    if (!S.pockets.length) { toast("Buat pocket dulu di menu Pocket ya"); return; }
     f.id = x ? x.id : null; f.ikon = x ? x.ikon || "🎯" : "🎯";
     $("sf-title").textContent = x ? "Ubah target" : "Tambah target";
     $("sf-nama").value = x ? x.nama : "";
     $("sf-target").value = x && x.target ? x.target.toLocaleString("id-ID") : "";
-    $("sf-pocket").innerHTML = S.pockets.map((p) => `<option value="${esc(p.id)}">${esc(pkIcon(p) + " " + p.nama)}</option>`).join("");
-    $("sf-pocket").value = x && pk(x.pocketId) ? x.pocketId : S.pockets[0].id;
+    $("sf-pocket").innerHTML = S.pockets.map((p) => `<option value="${esc(p.id)}">${esc(pkIcon(p) + " " + p.nama)} · ${esc(S.mask(fmtRp(p.saldo || 0)))}</option>`).join("") + `<option value="${NEW}">➕ Buat pocket baru…</option>`;
+    $("sf-pocket").value = x && pk(x.pocketId) ? x.pocketId : S.pockets.length ? S.pockets[0].id : NEW;
+    $("sf-newpk-nama").value = ""; $("sf-newpk-tipe").value = "bank"; toggleNew();
     $("sf-tenggat").value = x && x.tenggat ? x.tenggat : "";
     $("sf-tenggat").min = dateKey(new Date());
     $("sf-ket").value = x ? x.keterangan || "" : "";
@@ -117,19 +123,33 @@ export function createSavings({ db, S, $, esc, toast }) {
 
   $("sf-save").onclick = () => {
     const nama = $("sf-nama").value.trim().slice(0, 40), target = parseRp($("sf-target").value);
-    const pocketId = $("sf-pocket").value, tenggat = $("sf-tenggat").value, keterangan = $("sf-ket").value.trim().slice(0, 80);
+    let pocketId = $("sf-pocket").value, tenggat = $("sf-tenggat").value, keterangan = $("sf-ket").value.trim().slice(0, 80);
     const err = $("sf-error");
     if (!nama) { err.textContent = "Nama targetnya diisi dulu ya."; return; }
     if (!target) { err.textContent = "Isi nominal targetnya dulu ya."; return; }
     if (target >= 1e12) { err.textContent = "Nominalnya terlalu besar."; return; }
-    if (!pk(pocketId)) { err.textContent = "Pilih pocket penyimpannya dulu ya."; return; }
+    let newPk = null;
+    if (pocketId === NEW) {
+      const pn = $("sf-newpk-nama").value.trim().slice(0, 30), pt = $("sf-newpk-tipe").value;
+      if (!pn) { err.textContent = "Nama pocket barunya diisi dulu ya."; return; }
+      if (S.pockets.some((p) => p.nama.toLowerCase() === pn.toLowerCase())) { err.textContent = "Nama pocket ini sudah ada. Pilih dari daftar pocket saja ya."; return; }
+      const pref = doc(collection(db, "users", uid(), "pockets"));
+      newPk = { ref: pref, data: { nama: pn, tipe: pt, ikon: POCKET_TYPES[pt].ikon, keterangan: "", saldo: 0, urutan: S.pockets.length, createdAt: serverTimestamp() } };
+      pocketId = pref.id;
+    } else if (!pk(pocketId)) { err.textContent = "Pilih pocket penyimpannya dulu ya."; return; }
     if (S.savings.some((x) => x.id !== f.id && x.nama.toLowerCase() === nama.toLowerCase())) { err.textContent = "Nama target ini sudah ada."; return; }
     const data = { nama, target, pocketId, ikon: f.ikon, keterangan, tenggat: tenggat || "" };
     const ref = f.id ? doc(db, "users", uid(), "savings", f.id) : doc(collection(db, "users", uid(), "savings"));
     if (!f.id) { data.terkumpul = 0; data.urutan = S.savings.length; data.createdAt = serverTimestamp(); }
-    setDoc(ref, data, { merge: true }).catch((e2) => { console.error(e2); toast("Target gagal tersimpan: " + (e2.code || e2.message)); });
+    const gagal = (e2) => { console.error(e2); toast("Target gagal tersimpan: " + (e2.code || e2.message)); };
+    if (newPk) { // pocket baru dan targetnya disimpan bersamaan
+      const batch = writeBatch(db);
+      batch.set(newPk.ref, newPk.data);
+      batch.set(ref, data, { merge: true });
+      batch.commit().catch(gagal);
+    } else setDoc(ref, data, { merge: true }).catch(gagal);
     closeSheet();
-    toast(f.id ? "Target diperbarui" : "Target tabungan ditambahkan 🐷");
+    toast(newPk ? `Target ditambahkan, pocket “${newPk.data.nama}” dibuat 🐷` : f.id ? "Target diperbarui" : "Target tabungan ditambahkan 🐷");
   };
   $("sf-delete").onclick = () => {
     const x = sv(f.id); if (!x) return;

@@ -336,7 +336,7 @@ async function startHome() {
   S.unsub.push(onSnapshot(doc(db, "users", uid, "cycles", S.cycle.id), (s) => { S.cycleDoc = s.data() || null; render(); }));
   // Transaksi 6 siklus terakhir (untuk Dashboard); S.tx = yang di siklus berjalan saja
   let dari = S.cycle;
-  for (let i = 0; i < 5; i++) dari = prevCycle(dari, S.profile.tanggalGajian);
+  for (let i = 0; i < 11; i++) dari = prevCycle(dari, S.profile.tanggalGajian); // 12 siklus, untuk diagram tahunan
   S.unsub.push(onSnapshot(
     query(collection(db, "users", uid, "transactions"), where("tanggal", ">=", Timestamp.fromDate(dari.start))),
     (s) => {
@@ -380,7 +380,7 @@ function render() {
   if (!S.cycleDoc || !S.cycle || !S.profile) return;
   const cd = S.cycleDoc, c = S.cycle;
   $("hi").textContent = `Halo, ${S.profile.nama || "kamu"} 👋`;
-  $("open-profile").textContent = initial(S.profile.nama);
+  paintAvatar();
   $("cycle-info").textContent = `Siklus ${fmtTgl(c.start)} – ${fmtTgl(c.next)} · hari ke-${c.dayNumber} dari ${c.totalDays}`;
 
   $("pos-list").innerHTML = S.envelopes.map((e) => {
@@ -405,7 +405,7 @@ function render() {
 /* ---------- Profil ---------- */
 $("open-profile").onclick = () => {
   $("pf-nama").value = S.profile?.nama || "";
-  $("pf-avatar").textContent = initial(S.profile?.nama);
+  paintAvatar(true);
   $("pf-email-now").textContent = S.user.email || "";
   ["pf-email-new", "pf-email-pw", "pf-pass-cur", "pf-pass-new"].forEach((id) => { $(id).value = ""; });
   ["pf-name-msg", "pf-email-msg", "pf-pass-msg", "pf-gaji-msg"].forEach((id) => setMsg(id, ""));
@@ -431,7 +431,7 @@ $("pf-name-form").addEventListener("submit", async (e) => {
     batch.set(doc(db, "directory", uid), { nama }, { merge: true });
     await batch.commit();
     S.profile.nama = nama;
-    $("pf-avatar").textContent = initial(nama);
+    paintAvatar(true);
     setMsg("pf-name-msg", "Nama tersimpan ✅", true);
   } catch (err) {
     console.error(err);
@@ -476,6 +476,114 @@ $("pf-pass-form").addEventListener("submit", async (e) => {
     setMsg("pf-pass-msg", authMsg(err.code, "reauth"));
   }
 });
+
+/* ---------- Foto / ikon profil ---------- */
+const AV_ICONS = ["⚖️", "💰", "💵", "🪙", "🏦", "🐷", "💎", "📈", "💳", "🧾", "🔥", "⭐", "🦁", "🐯", "🐼", "🦊", "🚀", "🎯", "🌱", "👑", "🧠", "🛡️", "🍀", "🎨"];
+let avSig = "";
+function avatarInner(p) {
+  const a = p && p.avatar;
+  if (a && a.tipe === "foto" && a.v) return `<img src="${esc(a.v)}" alt="Foto profil">`;
+  if (a && a.tipe === "ikon" && a.v) return `<span class="emo">${esc(a.v)}</span>`;
+  return esc(initial(p && p.nama));
+}
+function paintAvatar(force) {
+  if (!S.profile) return;
+  const html = avatarInner(S.profile);
+  if (!force && html === avSig) return; // render() sering dipanggil, jangan gambar ulang kalau tidak berubah
+  avSig = html;
+  $("open-profile").innerHTML = html;
+  $("pf-avatar").innerHTML = html + `<span class="avatar-edit">Ubah</span>`;
+}
+const av = { tipe: null, v: null, img: null, zoom: 1, ox: 0, oy: 0, dirty: false };
+const AV_C = 480; // sisi kanvas (px), hasil akhir diperkecil ke 256 x 256
+function avPreview() {
+  $("av-prev").innerHTML = av.tipe === "ikon" ? `<span style="font-size:48px">${esc(av.v)}</span>` : av.tipe === "foto" && av.v ? `<img src="${esc(av.v)}" alt="">` : esc(initial(S.profile && S.profile.nama));
+  $("av-grid").querySelectorAll("button").forEach((b) => b.classList.toggle("sel", av.tipe === "ikon" && b.dataset.i === av.v));
+}
+function avDraw() {
+  const cv = $("av-canvas"), x = cv.getContext("2d"), im = av.img; if (!im) return;
+  const sc = (AV_C / Math.min(im.naturalWidth, im.naturalHeight)) * av.zoom, w = im.naturalWidth * sc, h = im.naturalHeight * sc;
+  av.ox = Math.min(0, Math.max(AV_C - w, av.ox)); av.oy = Math.min(0, Math.max(AV_C - h, av.oy));
+  x.fillStyle = "#222"; x.fillRect(0, 0, AV_C, AV_C);
+  x.drawImage(im, av.ox, av.oy, w, h);
+}
+function avScale() { return (AV_C / Math.min(av.img.naturalWidth, av.img.naturalHeight)) * av.zoom; }
+function openAvatar() {
+  const a = S.profile && S.profile.avatar;
+  av.tipe = a ? a.tipe : null; av.v = a ? a.v : null; av.img = null; av.dirty = false;
+  $("av-crop").classList.remove("on"); $("av-error").textContent = ""; $("av-file").value = "";
+  $("av-grid").innerHTML = AV_ICONS.map((i) => `<button type="button" data-i="${i}" aria-label="Ikon ${i}">${i}</button>`).join("");
+  avPreview();
+  $("avatar-sheet").hidden = false;
+}
+const closeAvatar = () => { $("avatar-sheet").hidden = true; };
+$("pf-avatar").onclick = openAvatar;
+$("pf-avatar-btn").onclick = openAvatar;
+$("av-close").onclick = closeAvatar;
+$("avatar-sheet").addEventListener("click", (e) => { if (e.target === $("avatar-sheet")) closeAvatar(); });
+$("av-grid").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  av.tipe = "ikon"; av.v = b.dataset.i; av.img = null; av.dirty = true;
+  $("av-crop").classList.remove("on"); avPreview();
+});
+$("av-upload").onclick = () => $("av-file").click();
+$("av-file").addEventListener("change", () => {
+  const file = $("av-file").files && $("av-file").files[0]; if (!file) return;
+  const err = $("av-error"); err.textContent = "";
+  if (!/^image\//.test(file.type)) { err.textContent = "Pilih file gambar ya (JPG, PNG, dst)."; return; }
+  if (file.size > 20 * 1024 * 1024) { err.textContent = "Fotonya terlalu besar (maks 20 MB)."; return; }
+  const url = URL.createObjectURL(file), im = new Image();
+  im.onload = () => {
+    URL.revokeObjectURL(url);
+    av.img = im; av.zoom = 1; $("av-zoom").value = "1";
+    const sc = avScale(); av.ox = (AV_C - im.naturalWidth * sc) / 2; av.oy = (AV_C - im.naturalHeight * sc) / 2;
+    av.tipe = "foto"; av.dirty = true;
+    $("av-crop").classList.add("on"); avDraw();
+    av.v = $("av-canvas").toDataURL("image/jpeg", 0.8); avPreview();
+  };
+  im.onerror = () => { URL.revokeObjectURL(url); err.textContent = "Fotonya tidak bisa dibuka. Coba foto lain (JPG atau PNG)."; };
+  im.src = url;
+});
+// Geser foto di dalam bingkai 1:1, dan zoom
+(() => {
+  const st = $("av-stage"); let drag = null;
+  const refresh = () => { avDraw(); av.v = $("av-canvas").toDataURL("image/jpeg", 0.8); avPreview(); };
+  st.addEventListener("pointerdown", (e) => { if (!av.img) return; drag = { x: e.clientX, y: e.clientY, ox: av.ox, oy: av.oy }; try { st.setPointerCapture(e.pointerId); } catch { /* abaikan */ } });
+  st.addEventListener("pointermove", (e) => {
+    if (!drag || !av.img) return;
+    const k = AV_C / st.clientWidth;
+    av.ox = drag.ox + (e.clientX - drag.x) * k; av.oy = drag.oy + (e.clientY - drag.y) * k; avDraw();
+  });
+  const end = () => { if (drag) { drag = null; refresh(); } };
+  st.addEventListener("pointerup", end); st.addEventListener("pointercancel", end);
+  $("av-zoom").addEventListener("input", () => {
+    if (!av.img) return;
+    const old = avScale(), cx = (AV_C / 2 - av.ox) / old, cy = (AV_C / 2 - av.oy) / old;
+    av.zoom = Number($("av-zoom").value); const nw = avScale();
+    av.ox = AV_C / 2 - cx * nw; av.oy = AV_C / 2 - cy * nw; refresh();
+  });
+})();
+async function simpanAvatar(avatar) {
+  const err = $("av-error"); err.textContent = "";
+  $("av-save").disabled = $("av-reset").disabled = true;
+  try {
+    await setDoc(doc(db, "users", S.user.uid), { avatar }, { merge: true });
+    S.profile.avatar = avatar; paintAvatar(true); closeAvatar(); toast("Profil diperbarui ✨");
+  } catch (e) {
+    console.error(e); err.textContent = "Gagal menyimpan: " + (e.code || e.message);
+  }
+  $("av-save").disabled = $("av-reset").disabled = false;
+}
+$("av-save").onclick = () => {
+  if (!av.tipe || !av.v) { $("av-error").textContent = "Pilih ikon atau foto dulu ya."; return; }
+  if (!av.dirty) { closeAvatar(); return; }
+  if (av.tipe === "foto" && av.img) { // hasil akhir 256 x 256 supaya ringan disimpan
+    const out = document.createElement("canvas"); out.width = out.height = 256;
+    out.getContext("2d").drawImage($("av-canvas"), 0, 0, 256, 256);
+    simpanAvatar({ tipe: "foto", v: out.toDataURL("image/jpeg", 0.85) });
+  } else simpanAvatar({ tipe: av.tipe, v: av.v });
+};
+$("av-reset").onclick = () => simpanAvatar(null);
 
 /* ---------- Gaji (bisa lebih dari satu) ---------- */
 let gj = [];
